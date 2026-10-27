@@ -183,8 +183,11 @@ const matchesFilter = computed(() => {
 }
 
 .tree-node-row.selected {
-  background: var(--bg-selected);
-  color: var(--text-bright);
+  background: var(--bg-selected) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  border-left: 3px solid var(--border-selected) !important;
+  box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.25);
 }
 
 .chevron-btn {

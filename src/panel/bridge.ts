@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue';
+import { reactive } from 'vue';
 import type {
   SerializedNode,
   ObjectDetails,
@@ -22,6 +22,9 @@ export const state = reactive({
   stats: null as RendererStats | null,
   wireframeActive: false,
   pickerActive: false,
+  pointerLockBypassed: false,
+  scenePaused: false,
+  lockedTransformUuids: new Set<string>(),
   filterQuery: '',
   statusMessage: 'Waiting for Three.js scene...'
 });
@@ -65,7 +68,7 @@ function handleMessage(message: InspectorMessage) {
       if (message.payload?.version) {
         state.version = message.payload.version;
       }
-      state.statusMessage = `Three.js detected (revision: ${state.version || 'r?'})`;
+      state.statusMessage = `Three.js detected (${state.version || 'r?'})`;
       send('REQUEST_SCENE_GRAPH');
       break;
 
@@ -146,6 +149,27 @@ export function toggleWireframe() {
 export function togglePicker() {
   state.pickerActive = !state.pickerActive;
   send('TOGGLE_PICKER', { enabled: state.pickerActive });
+}
+
+export function togglePointerLockBypass() {
+  state.pointerLockBypassed = !state.pointerLockBypassed;
+  send('TOGGLE_POINTER_LOCK_BYPASS', { enabled: state.pointerLockBypassed });
+}
+
+export function togglePauseScene() {
+  state.scenePaused = !state.scenePaused;
+  send('TOGGLE_PAUSE_SCENE', { enabled: state.scenePaused });
+}
+
+export function toggleLockTransform(uuid: string, position?: { x: number; y: number; z: number }) {
+  const isLocked = state.lockedTransformUuids.has(uuid);
+  if (isLocked) {
+    state.lockedTransformUuids.delete(uuid);
+    send('LOCK_TRANSFORM', { uuid, enabled: false });
+  } else {
+    state.lockedTransformUuids.add(uuid);
+    send('LOCK_TRANSFORM', { uuid, enabled: true, position });
+  }
 }
 
 export function refresh() {

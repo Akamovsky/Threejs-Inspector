@@ -249,6 +249,8 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
               class="cat-item-row"
               :class="{ selected: state.selectedUuid === cam.uuid }"
               @click="handleSelect(cam.uuid)"
+              @mouseenter="handleHover(cam.uuid)"
+              @mouseleave="handleHover(null)"
             >
               <span class="item-name" :title="cam.name">{{ cam.name }}</span>
               <span class="type-badge">{{ cam.type }}</span>
@@ -275,7 +277,10 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
               v-for="mat in filteredMaterials"
               :key="mat.uuid"
               class="cat-item-row"
+              :class="{ selected: state.selectedUuid && mat.linkedObjectUuids.includes(state.selectedUuid) }"
               @click="mat.linkedObjectUuids[0] && handleSelect(mat.linkedObjectUuids[0])"
+              @mouseenter="mat.linkedObjectUuids[0] && handleHover(mat.linkedObjectUuids[0])"
+              @mouseleave="handleHover(null)"
               :title="mat.linkedObjectUuids[0] ? 'Click to inspect in scene' : undefined"
             >
               <span
@@ -310,7 +315,10 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
               v-for="tex in filteredTextures"
               :key="tex.uuid"
               class="cat-item-row"
+              :class="{ selected: state.selectedUuid && tex.linkedObjectUuids.includes(state.selectedUuid) }"
               @click="tex.linkedObjectUuids[0] && handleSelect(tex.linkedObjectUuids[0])"
+              @mouseenter="tex.linkedObjectUuids[0] && handleHover(tex.linkedObjectUuids[0])"
+              @mouseleave="handleHover(null)"
             >
               <span class="item-name" :title="tex.name">{{ tex.name }}</span>
               <span class="type-badge">{{ tex.type }}</span>
@@ -339,7 +347,10 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
               v-for="geo in filteredGeometries"
               :key="geo.uuid"
               class="cat-item-row"
+              :class="{ selected: state.selectedUuid && geo.linkedObjectUuids.includes(state.selectedUuid) }"
               @click="geo.linkedObjectUuids[0] && handleSelect(geo.linkedObjectUuids[0])"
+              @mouseenter="geo.linkedObjectUuids[0] && handleHover(geo.linkedObjectUuids[0])"
+              @mouseleave="handleHover(null)"
             >
               <span class="item-name" :title="geo.name">{{ geo.name }}</span>
               <span class="geo-badge">{{ geo.type }}</span>
@@ -481,8 +492,11 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
 }
 
 .cat-item-row.selected {
-  background: var(--bg-selected);
-  color: var(--text-bright);
+  background: var(--bg-selected) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  border-left: 3px solid var(--border-selected) !important;
+  box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.25);
 }
 
 .color-dot {

@@ -1,3 +1,12 @@
+import {
+  Raycaster,
+  BoxHelper,
+  Box3,
+  Box3Helper,
+  Vector2,
+  Vector3,
+  Color
+} from 'three';
 import type {
   SerializedNode,
   ObjectDetails,
@@ -17,12 +26,10 @@ import type {
 import {
   MESSAGE_SOURCE,
   type InspectorMessage,
-  type UpdatePropertyPayload,
-  type ToggleHelperPayload
+  type UpdatePropertyPayload
 } from '../types/messages';
 
 (function initThreeInspectorHook() {
-  // Prevent duplicate injection
   if ((window as any).__THREE_INSPECTOR_HOOK_INSTALLED__) {
     return;
   }
@@ -33,11 +40,23 @@ import {
   const registeredRenderers = new Set<any>();
   const uuidToObjectMap = new Map<string, any>();
 
-  // Helpers
+  // Helper and Selection State
   let currentHighlightHelper: any = null;
+  let currentHighlightTarget: any = null;
   let activeSelectedUuid: string | null = null;
   let lastActiveCamera: any = null;
   let pickerEnabled = false;
+  let bypassPointerLock = false;
+
+  // Transform lock state (prevents game loops from overwriting user changes)
+  const lockedTransforms = new Map<
+    string,
+    {
+      position?: { x: number; y: number; z: number };
+      rotationDegrees?: { x: number; y: number; z: number };
+      scale?: { x: number; y: number; z: number };
+    }
+  >();
 
   // FPS calculation
   let frameCount = 0;
@@ -56,6 +75,22 @@ import {
     window.postMessage(message, '*');
   }
 
+  // Intercept Pointer Lock (bypasses pointer lock conflicts in FPS games)
+  if (typeof Element !== 'undefined' && Element.prototype.requestPointerLock) {
+    const originalRequestPointerLock = Element.prototype.requestPointerLock;
+    Element.prototype.requestPointerLock = function (options?: any) {
+      if (pickerEnabled || bypassPointerLock) {
+        if (document.pointerLockElement) {
+          try {
+            document.exitPointerLock();
+          } catch (e) {}
+        }
+        return Promise.resolve();
+      }
+      return originalRequestPointerLock.apply(this, arguments as any);
+    };
+  }
+
   // Color helper: Three.js Color -> Hex string
   function colorToHex(color: any): string {
     if (!color) return '#ffffff';
@@ -71,6 +106,45 @@ import {
     if (targetColor && typeof targetColor.set === 'function') {
       targetColor.set(hex);
     }
+  }
+
+  // Find object by UUID reliably across all scenes
+  function findObjectByUuid(uuid: string): any {
+    if (uuidToObjectMap.has(uuid)) {
+      return uuidToObjectMap.get(uuid);
+    }
+    for (const scene of registeredScenes) {
+      let found: any = null;
+      scene.traverse((o: any) => {
+        if (o && o.uuid) {
+          uuidToObjectMap.set(o.uuid, o);
+          if (o.uuid === uuid) found = o;
+        }
+      });
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // Find active camera
+  function getActiveCamera(): any {
+    if (lastActiveCamera) return lastActiveCamera;
+    for (const scene of registeredScenes) {
+      let cam: any = null;
+      scene.traverse((o: any) => {
+        if (o && o.isCamera && !cam) cam = o;
+      });
+      if (cam) return cam;
+    }
+    return null;
+  }
+
+  // Find active canvas
+  function getActiveCanvas(): HTMLCanvasElement | null {
+    for (const r of registeredRenderers) {
+      if (r && r.domElement) return r.domElement;
+    }
+    return document.querySelector('canvas');
   }
 
   // Register scene and index its objects
@@ -93,18 +167,69 @@ import {
     });
   }
 
-  // Register renderer
+  // Register renderer and hook its render method
   function registerRenderer(renderer: any) {
     if (!renderer) return;
     if (!registeredRenderers.has(renderer)) {
       registeredRenderers.add(renderer);
+      hookRendererInstance(renderer);
       emitDetection();
+    }
+  }
+
+  // Hook individual renderer instance
+  function hookRendererInstance(renderer: any) {
+    if (!renderer || renderer.__INSPECTOR_RENDER_HOOKED__) return;
+    renderer.__INSPECTOR_RENDER_HOOKED__ = true;
+
+    const originalRender = renderer.render;
+    renderer.render = function (scene: any, camera: any) {
+      if (scene) registerScene(scene);
+      if (camera) lastActiveCamera = camera;
+      registerRenderer(this);
+
+      // Force locked transforms right before rendering so game loops don't revert them
+      applyLockedTransforms();
+
+      tickRender(this);
+
+      return originalRender.apply(this, arguments as any);
+    };
+  }
+
+  // Apply user-locked transforms right before frame render
+  function applyLockedTransforms() {
+    for (const [uuid, locked] of lockedTransforms.entries()) {
+      const obj = findObjectByUuid(uuid);
+      if (!obj) continue;
+
+      if (locked.position) {
+        obj.position.set(locked.position.x, locked.position.y, locked.position.z);
+      }
+      if (locked.rotationDegrees) {
+        obj.rotation.set(
+          (locked.rotationDegrees.x * Math.PI) / 180,
+          (locked.rotationDegrees.y * Math.PI) / 180,
+          (locked.rotationDegrees.z * Math.PI) / 180
+        );
+      }
+      if (locked.scale) {
+        obj.scale.set(locked.scale.x, locked.scale.y, locked.scale.z);
+      }
+
+      obj.matrixAutoUpdate = true;
+      obj.matrixWorldNeedsUpdate = true;
+      obj.updateMatrix();
+      obj.updateMatrixWorld(true);
+      if (obj.isCamera) {
+        obj.updateProjectionMatrix?.();
+      }
     }
   }
 
   // Emit detection signal
   function emitDetection() {
-    const version = (window as any).__THREE__ || (window as any).THREE?.REVISION || 'unknown';
+    const version = (window as any).__THREE__ || (window as any).THREE?.REVISION || 'detected';
     emit('THREE_DETECTED', {
       version: String(version),
       scenesCount: registeredScenes.size,
@@ -115,7 +240,6 @@ import {
   // Serialize a node recursively
   function serializeNode(node: any, depth = 0): SerializedNode | null {
     if (!node || !node.isObject3D) return null;
-    // Don't inspect our own helper objects
     if (node.name === '__THREE_INSPECTOR_HELPER__') return null;
 
     uuidToObjectMap.set(node.uuid, node);
@@ -212,7 +336,7 @@ import {
                 materialMap.get(matUuid)!.linkedObjectUuids.push(obj.uuid);
               }
 
-              // Texture maps
+              // Textures
               const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
               slots.forEach((slot) => {
                 const tex = m[slot];
@@ -252,7 +376,7 @@ import {
         }
 
         // Lights
-        if (obj.isLight) {
+        if (obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
           lights.push({
             id: obj.id,
             uuid: obj.uuid,
@@ -324,14 +448,12 @@ import {
   function extractObjectDetails(obj: any): ObjectDetails | null {
     if (!obj) return null;
 
-    // Rotation in degrees
     const rotDeg = {
       x: +(obj.rotation.x * (180 / Math.PI)).toFixed(2),
       y: +(obj.rotation.y * (180 / Math.PI)).toFixed(2),
       z: +(obj.rotation.z * (180 / Math.PI)).toFixed(2)
     };
 
-    // Geometry details
     let geometry: GeometryInfo | null = null;
     if (obj.geometry) {
       const geo = obj.geometry;
@@ -359,7 +481,6 @@ import {
       };
     }
 
-    // Material details
     let material: MaterialInfo | MaterialInfo[] | null = null;
     if (obj.material) {
       if (Array.isArray(obj.material)) {
@@ -369,9 +490,8 @@ import {
       }
     }
 
-    // Light details
     let light: LightInfo | null = null;
-    if (obj.isLight) {
+    if (obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
       light = {
         color: colorToHex(obj.color),
         intensity: obj.intensity ?? 1,
@@ -383,7 +503,6 @@ import {
       };
     }
 
-    // Camera details
     let camera: CameraInfo | null = null;
     if (obj.isCamera) {
       camera = {
@@ -429,7 +548,7 @@ import {
     };
   }
 
-  // Update helper highlight in scene
+  // Update helper highlight in scene (Meshes, Lights, Cameras, Groups)
   function setHighlight(uuid: string | null) {
     if (currentHighlightHelper) {
       if (currentHighlightHelper.parent) {
@@ -439,52 +558,117 @@ import {
         currentHighlightHelper.dispose();
       }
       currentHighlightHelper = null;
+      currentHighlightTarget = null;
     }
 
     if (!uuid) return;
 
-    const target = uuidToObjectMap.get(uuid);
+    const target = findObjectByUuid(uuid);
     if (!target) return;
 
-    const THREE = (window as any).THREE;
-    if (!THREE || !THREE.BoxHelper) return;
-
     try {
-      const helper = new THREE.BoxHelper(target, 0x00ffcc);
-      helper.name = '__THREE_INSPECTOR_HELPER__';
-      helper.material.depthTest = false;
-      helper.material.transparent = true;
-      helper.material.opacity = 0.8;
-      helper.renderOrder = 99999;
+      let helper: any = null;
 
-      // Find root scene
-      let root = target;
-      while (root.parent) {
-        root = root.parent;
+      if (target.isMesh && target.geometry) {
+        helper = new BoxHelper(target, 0x00ffff);
+        helper.material.depthTest = false;
+        helper.material.transparent = true;
+        helper.material.opacity = 0.9;
+        helper.renderOrder = 999999;
+      } else {
+        // Light, Camera, or Group indicator box
+        const worldPos = new Vector3();
+        if (typeof target.getWorldPosition === 'function') {
+          target.getWorldPosition(worldPos);
+        } else {
+          worldPos.copy(target.position);
+        }
+
+        const box = new Box3();
+        box.setFromCenterAndSize(worldPos, new Vector3(1.2, 1.2, 1.2));
+        const colorHex = (target.isLight || target.type?.includes('Light'))
+          ? 0xffea00
+          : target.isCamera
+          ? 0xff3b30
+          : 0x00ffcc;
+        helper = new Box3Helper(box, new Color(colorHex));
+        helper.material.depthTest = false;
+        helper.material.transparent = true;
+        helper.material.opacity = 0.95;
+        helper.renderOrder = 999999;
       }
 
-      root.add(helper);
-      currentHighlightHelper = helper;
+      helper.name = '__THREE_INSPECTOR_HELPER__';
+
+      // Find root scene
+      let rootScene = Array.from(registeredScenes)[0];
+      let p = target;
+      while (p) {
+        if (p.isScene || registeredScenes.has(p)) {
+          rootScene = p;
+          break;
+        }
+        p = p.parent;
+      }
+
+      if (rootScene) {
+        rootScene.add(helper);
+        currentHighlightHelper = helper;
+        currentHighlightTarget = target;
+      }
     } catch (e) {
-      // Ignore helper errors for objects without geometries
+      console.warn('[Three.js Inspector] Failed to create highlight helper:', e);
     }
   }
 
   // Update object properties dynamically
   function updateObjectProperty(payload: UpdatePropertyPayload) {
     const { uuid, path, value } = payload;
-    const obj = uuidToObjectMap.get(uuid);
+    const obj = findObjectByUuid(uuid);
     if (!obj) return;
 
-    const [rootProp, subProp, nestedProp] = path;
+    const [rootProp, subProp] = path;
 
     if (rootProp === 'position' && subProp) {
       obj.position[subProp] = Number(value);
+      obj.matrixAutoUpdate = true;
+      obj.matrixWorldNeedsUpdate = true;
+      obj.updateMatrix();
+      obj.updateMatrixWorld(true);
+      if (obj.isCamera) obj.updateProjectionMatrix?.();
+
+      // Update locked transform if currently pinned
+      const locked = lockedTransforms.get(uuid);
+      if (locked) {
+        if (!locked.position) locked.position = { x: obj.position.x, y: obj.position.y, z: obj.position.z };
+        (locked.position as any)[subProp] = Number(value);
+      }
     } else if (rootProp === 'rotationDegrees' && subProp) {
       const rad = (Number(value) * Math.PI) / 180;
       obj.rotation[subProp] = rad;
+      obj.matrixAutoUpdate = true;
+      obj.matrixWorldNeedsUpdate = true;
+      obj.updateMatrix();
+      obj.updateMatrixWorld(true);
+      if (obj.isCamera) obj.updateProjectionMatrix?.();
+
+      const locked = lockedTransforms.get(uuid);
+      if (locked) {
+        if (!locked.rotationDegrees) locked.rotationDegrees = { x: 0, y: 0, z: 0 };
+        (locked.rotationDegrees as any)[subProp] = Number(value);
+      }
     } else if (rootProp === 'scale' && subProp) {
       obj.scale[subProp] = Number(value);
+      obj.matrixAutoUpdate = true;
+      obj.matrixWorldNeedsUpdate = true;
+      obj.updateMatrix();
+      obj.updateMatrixWorld(true);
+
+      const locked = lockedTransforms.get(uuid);
+      if (locked) {
+        if (!locked.scale) locked.scale = { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z };
+        (locked.scale as any)[subProp] = Number(value);
+      }
     } else if (rootProp === 'visible') {
       obj.visible = Boolean(value);
     } else if (rootProp === 'castShadow') {
@@ -508,7 +692,7 @@ import {
         mat.visible = Boolean(value);
       }
       mat.needsUpdate = true;
-    } else if (rootProp === 'light' && obj.isLight) {
+    } else if (rootProp === 'light') {
       if (subProp === 'color') {
         hexToColor(obj.color, value);
       } else if (subProp === 'intensity') {
@@ -545,7 +729,7 @@ import {
     }
   }
 
-  // Toggle wireframe on entire scene or selected object
+  // Toggle wireframe on entire scene
   function toggleWireframe(enabled: boolean) {
     for (const scene of registeredScenes) {
       scene.traverse((node: any) => {
@@ -563,14 +747,12 @@ import {
 
   // Expose object to console as window.$three
   function inspectInConsole(uuid: string) {
-    const obj = uuidToObjectMap.get(uuid);
+    const obj = findObjectByUuid(uuid);
     if (!obj) return;
     try {
       (window as any).$three = obj;
       (window as any).$selected = obj;
-    } catch (e) {
-      // Ignore if window properties are protected
-    }
+    } catch (e) {}
     console.log(
       '%c[Three.js Inspector]%c Selected object assigned to %c$three%c and %c$selected%c:',
       'background: #3b82f6; color: white; padding: 2px 4px; border-radius: 3px; font-weight: bold;',
@@ -614,55 +796,42 @@ import {
       emit('STATS_UPDATE', stats);
     }
 
-    if (currentHighlightHelper && typeof currentHighlightHelper.update === 'function') {
-      currentHighlightHelper.update();
+    // Keep highlight helper in sync with target
+    if (currentHighlightHelper && currentHighlightTarget) {
+      if (typeof currentHighlightHelper.update === 'function') {
+        currentHighlightHelper.update();
+      } else if (currentHighlightHelper.box) {
+        const worldPos = new Vector3();
+        if (typeof currentHighlightTarget.getWorldPosition === 'function') {
+          currentHighlightTarget.getWorldPosition(worldPos);
+        } else {
+          worldPos.copy(currentHighlightTarget.position);
+        }
+        currentHighlightHelper.box.setFromCenterAndSize(worldPos, new Vector3(1.2, 1.2, 1.2));
+      }
     }
   }
 
-  // Universal Hook into THREE.WebGLRenderer
-  function hookRendererPrototype() {
-    const THREE = (window as any).THREE;
-    if (THREE && THREE.WebGLRenderer && !THREE.WebGLRenderer.__INSPECTOR_HOOKED__) {
-      THREE.WebGLRenderer.__INSPECTOR_HOOKED__ = true;
-      const originalRender = THREE.WebGLRenderer.prototype.render;
-
-      THREE.WebGLRenderer.prototype.render = function (scene: any, camera: any) {
-        registerRenderer(this);
-        if (scene) registerScene(scene);
-        if (camera) lastActiveCamera = camera;
-        tickRender(this);
-        return originalRender.apply(this, arguments as any);
-      };
-
-      emitDetection();
-    }
-  }
-
-  // Raycaster Picker Handlers
-  function getActiveCanvas(): HTMLCanvasElement | null {
-    for (const r of registeredRenderers) {
-      if (r && r.domElement) return r.domElement;
-    }
-    return document.querySelector('canvas');
-  }
-
+  // 3D Canvas Raycaster Picker Handlers
   function onPickerPointerMove(e: PointerEvent) {
-    if (!pickerEnabled || !lastActiveCamera) return;
-    const canvas = e.currentTarget as HTMLCanvasElement;
-    if (!canvas) return;
+    if (!pickerEnabled) return;
+    const camera = getActiveCamera();
+    if (!camera) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const mouse = {
-      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      y: -((e.clientY - rect.top) / rect.height) * 2 + 1
-    };
-
-    const THREE = (window as any).THREE;
-    if (!THREE || !THREE.Raycaster) return;
+    const canvas = getActiveCanvas();
+    const mouse = new Vector2();
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    } else {
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    }
 
     try {
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(mouse, lastActiveCamera);
+      const raycaster = new Raycaster();
+      raycaster.setFromCamera(mouse, camera);
 
       const targets: any[] = [];
       for (const scene of registeredScenes) {
@@ -673,7 +842,7 @@ import {
         });
       }
 
-      const intersects = raycaster.intersectObjects(targets, false);
+      const intersects = raycaster.intersectObjects(targets, true);
       if (intersects.length > 0) {
         const hit = intersects[0].object;
         setHighlight(hit.uuid);
@@ -684,25 +853,37 @@ import {
   }
 
   function onPickerClick(e: MouseEvent) {
-    if (!pickerEnabled || !lastActiveCamera) return;
+    if (!pickerEnabled) return;
     e.preventDefault();
     e.stopPropagation();
+    e.stopImmediatePropagation();
 
-    const canvas = e.currentTarget as HTMLCanvasElement;
-    if (!canvas) return;
+    if (document.pointerLockElement) {
+      try {
+        document.exitPointerLock();
+      } catch (err) {}
+    }
 
-    const rect = canvas.getBoundingClientRect();
-    const mouse = {
-      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      y: -((e.clientY - rect.top) / rect.height) * 2 + 1
-    };
+    const camera = getActiveCamera();
+    if (!camera) {
+      setPickerMode(false);
+      return;
+    }
 
-    const THREE = (window as any).THREE;
-    if (!THREE || !THREE.Raycaster) return;
+    const canvas = getActiveCanvas();
+    const mouse = new Vector2();
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    } else {
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    }
 
     try {
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(mouse, lastActiveCamera);
+      const raycaster = new Raycaster();
+      raycaster.setFromCamera(mouse, camera);
 
       const targets: any[] = [];
       for (const scene of registeredScenes) {
@@ -713,13 +894,12 @@ import {
         });
       }
 
-      const intersects = raycaster.intersectObjects(targets, false);
+      const intersects = raycaster.intersectObjects(targets, true);
       if (intersects.length > 0) {
         const hit = intersects[0].object;
         activeSelectedUuid = hit.uuid;
         setHighlight(hit.uuid);
 
-        // Notify DevTools panel
         emit('OBJECT_PICKED', { uuid: hit.uuid });
 
         const details = extractObjectDetails(hit);
@@ -729,30 +909,74 @@ import {
       }
     } catch (err) {}
 
-    // Disable picker after selection
     setPickerMode(false);
+  }
+
+  function onPickerCapture(e: MouseEvent) {
+    if (pickerEnabled) {
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (document.pointerLockElement) {
+        try {
+          document.exitPointerLock();
+        } catch (err) {}
+      }
+    }
   }
 
   function setPickerMode(enabled: boolean) {
     pickerEnabled = enabled;
     const canvas = getActiveCanvas();
-    if (!canvas) return;
 
     if (enabled) {
-      canvas.style.cursor = 'crosshair';
-      canvas.addEventListener('pointermove', onPickerPointerMove, true);
-      canvas.addEventListener('click', onPickerClick, true);
+      if (document.pointerLockElement) {
+        try {
+          document.exitPointerLock();
+        } catch (e) {}
+      }
+      if (canvas) {
+        canvas.style.cursor = 'crosshair';
+        canvas.addEventListener('pointermove', onPickerPointerMove, true);
+        canvas.addEventListener('click', onPickerClick, true);
+      }
+      window.addEventListener('mousedown', onPickerCapture, true);
+      window.addEventListener('pointerdown', onPickerCapture, true);
+      window.addEventListener('click', onPickerCapture, true);
     } else {
-      canvas.style.cursor = '';
-      canvas.removeEventListener('pointermove', onPickerPointerMove, true);
-      canvas.removeEventListener('click', onPickerClick, true);
+      if (canvas) {
+        canvas.style.cursor = '';
+        canvas.removeEventListener('pointermove', onPickerPointerMove, true);
+        canvas.removeEventListener('click', onPickerClick, true);
+      }
+      window.removeEventListener('mousedown', onPickerCapture, true);
+      window.removeEventListener('pointerdown', onPickerCapture, true);
+      window.removeEventListener('click', onPickerCapture, true);
       setHighlight(activeSelectedUuid);
+    }
+  }
+
+  // Universal Hook into THREE.WebGLRenderer Prototype
+  function hookRendererPrototype() {
+    const THREE = (window as any).THREE;
+    if (THREE && THREE.WebGLRenderer && !THREE.WebGLRenderer.__INSPECTOR_HOOKED__) {
+      THREE.WebGLRenderer.__INSPECTOR_HOOKED__ = true;
+      const originalRender = THREE.WebGLRenderer.prototype.render;
+
+      THREE.WebGLRenderer.prototype.render = function (scene: any, camera: any) {
+        registerRenderer(this);
+        if (scene) registerScene(scene);
+        if (camera) lastActiveCamera = camera;
+        applyLockedTransforms();
+        tickRender(this);
+        return originalRender.apply(this, arguments as any);
+      };
+
+      emitDetection();
     }
   }
 
   // Listen to messages from content script
   window.addEventListener('message', (event) => {
-    // Only accept messages from same origin and tagged for hook
     if (event.source !== window || !event.data || event.data.source !== MESSAGE_SOURCE.CONTENT) {
       return;
     }
@@ -765,7 +989,6 @@ import {
         break;
 
       case 'REQUEST_SCENE_GRAPH':
-        // Re-index all registered scenes in case new objects were added
         for (const scene of registeredScenes) {
           indexSceneObjects(scene);
         }
@@ -775,7 +998,7 @@ import {
       case 'SELECT_OBJECT':
         if (payload?.uuid) {
           activeSelectedUuid = payload.uuid;
-          const obj = uuidToObjectMap.get(payload.uuid);
+          const obj = findObjectByUuid(payload.uuid);
           if (obj) {
             setHighlight(payload.uuid);
             const details = extractObjectDetails(obj);
@@ -813,16 +1036,38 @@ import {
           setPickerMode(payload.enabled);
         }
         break;
+
+      case 'TOGGLE_POINTER_LOCK_BYPASS':
+        if (typeof payload?.enabled === 'boolean') {
+          bypassPointerLock = payload.enabled;
+          if (bypassPointerLock && document.pointerLockElement) {
+            try {
+              document.exitPointerLock();
+            } catch (e) {}
+          }
+        }
+        break;
+
+      case 'LOCK_TRANSFORM':
+        if (payload?.uuid) {
+          if (payload.enabled) {
+            const obj = findObjectByUuid(payload.uuid);
+            const pos = payload.position || (obj ? { x: obj.position.x, y: obj.position.y, z: obj.position.z } : undefined);
+            lockedTransforms.set(payload.uuid, { position: pos });
+          } else {
+            lockedTransforms.delete(payload.uuid);
+          }
+        }
+        break;
     }
   });
 
-  // Safe setup for Three.js DevTools hook protocol
+  // Setup Three.js DevTools Hook Protocol immediately
   function setupDevToolsHook() {
     try {
       let devtools = (window as any).__THREE_DEVTOOLS__;
 
       if (!devtools) {
-        // Create standard Three.js EventTarget hook if not present
         devtools = typeof EventTarget !== 'undefined' ? new EventTarget() : {};
         try {
           Object.defineProperty(window, '__THREE_DEVTOOLS__', {
@@ -838,18 +1083,29 @@ import {
         }
       }
 
-      // Listen to native Three.js 'observe' events (Three.js r120+ dispatches to __THREE_DEVTOOLS__)
+      // Three.js r120+ standard devtools event protocol
       if (devtools && typeof devtools.addEventListener === 'function') {
         devtools.addEventListener('observe', (event: any) => {
           const detail = event?.detail;
-          if (detail) {
-            if (detail.isScene || detail.isObject3D) registerScene(detail);
-            if (detail.render && detail.domElement) registerRenderer(detail);
+          if (!detail) return;
+          if (detail.isScene || (detail.isObject3D && detail.children)) {
+            registerScene(detail);
+          }
+          if (detail.render && (detail.domElement || detail.capabilities)) {
+            registerRenderer(detail);
+            hookRendererInstance(detail);
+          }
+        });
+
+        devtools.addEventListener('register', (event: any) => {
+          const detail = event?.detail;
+          if (detail?.revision) {
+            (window as any).__THREE__ = detail.revision;
+            emitDetection();
           }
         });
       }
 
-      // Safely attach helper methods if writable
       if (devtools && typeof devtools === 'object') {
         try {
           devtools.registerScene = registerScene;
@@ -863,7 +1119,6 @@ import {
         } catch {}
       }
 
-      // Also set isolated property for our inspector
       try {
         (window as any).__THREE_INSPECTOR__ = {
           registerScene,
@@ -876,38 +1131,36 @@ import {
           }
         };
       } catch {}
-    } catch (e) {
-      // Keep hook functioning even if window properties are strictly locked down
-    }
+    } catch (e) {}
   }
 
+  // Initialize devtools protocol immediately
   setupDevToolsHook();
-
-  // Attempt initial hook and watch for THREE appearing
   hookRendererPrototype();
 
-  // Watch for THREE being set on window
+  // Watch for scenes and renderers in window scope or dynamically created
   let checkCount = 0;
   const interval = setInterval(() => {
     checkCount++;
     hookRendererPrototype();
 
-    // Check common global variables like window.scene or window.renderer
     if ((window as any).scene && (window as any).scene.isObject3D) {
       registerScene((window as any).scene);
     }
+    if ((window as any).renderer && (window as any).renderer.render) {
+      registerRenderer((window as any).renderer);
+    }
 
-    if (checkCount > 20 && registeredScenes.size > 0) {
+    if (checkCount > 30 && registeredScenes.size > 0 && registeredRenderers.size > 0) {
       clearInterval(interval);
     }
-  }, 500);
+  }, 400);
 
-  // Hook HTMLCanvasElement.prototype.getContext to detect WebGL canvases even before Three attaches
+  // Hook WebGL Canvas Context
   const origGetContext = HTMLCanvasElement.prototype.getContext;
   (HTMLCanvasElement.prototype as any).getContext = function (type: string, ...args: any[]) {
     const ctx = origGetContext.apply(this, [type, ...args] as any);
     if (type === 'webgl' || type === 'webgl2') {
-      // Check for Three.js after short delay when renderer sets up
       setTimeout(() => hookRendererPrototype(), 100);
     }
     return ctx;

@@ -33,6 +33,9 @@ export type ActionType =
   | 'TOGGLE_HELPER'
   | 'TOGGLE_WIREFRAME'
   | 'TOGGLE_PICKER'
+  | 'TOGGLE_POINTER_LOCK_BYPASS'
+  | 'LOCK_TRANSFORM'
+  | 'TOGGLE_PAUSE_SCENE'
   | 'PING'
   | 'PONG';
 
@@ -84,4 +87,18 @@ export interface TogglePickerPayload {
 
 export interface ObjectPickedPayload {
   uuid: string;
+}
+
+export interface TogglePointerLockBypassPayload {
+  enabled: boolean;
+}
+
+export interface LockTransformPayload {
+  uuid: string;
+  enabled: boolean;
+  position?: { x: number; y: number; z: number };
+}
+
+export interface TogglePauseScenePayload {
+  enabled: boolean;
 }

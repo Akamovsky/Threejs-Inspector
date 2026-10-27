@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { state, updateProperty, inspectInConsole } from '../bridge';
+import { state, updateProperty, inspectInConsole, toggleLockTransform } from '../bridge';
 import {
   Terminal,
   Move,
@@ -10,7 +10,9 @@ import {
   Palette,
   Sun,
   Camera as CameraIcon,
-  Info
+  Info,
+  Lock,
+  Unlock
 } from 'lucide-vue-next';
 
 const obj = computed(() => state.selectedObject);
@@ -61,9 +63,21 @@ const activeMaterial = computed(() => {
 
       <!-- Transform Card -->
       <div class="section-card">
-        <div class="section-title">
-          <Move :size="13" class="section-icon" />
-          Transform
+        <div class="section-title transform-title">
+          <div class="title-left">
+            <Move :size="13" class="section-icon" />
+            Transform
+          </div>
+          <button
+            class="lock-btn"
+            :class="{ active: state.lockedTransformUuids.has(obj.uuid) }"
+            @click="toggleLockTransform(obj.uuid, obj.position)"
+            :title="state.lockedTransformUuids.has(obj.uuid) ? 'Transform locked in game loop. Click to release.' : 'Lock transform to prevent game loops / physics from overwriting it'"
+          >
+            <Lock v-if="state.lockedTransformUuids.has(obj.uuid)" :size="10" />
+            <Unlock v-else :size="10" />
+            <span>{{ state.lockedTransformUuids.has(obj.uuid) ? 'Locked in Loop' : 'Lock in Loop' }}</span>
+          </button>
         </div>
 
         <div class="fields-grid">
@@ -325,14 +339,26 @@ const activeMaterial = computed(() => {
             </div>
           </div>
           <div class="field-row">
-            <span class="field-label">Intensity</span>
-            <input
-              type="number"
-              step="0.1"
-              min="0"
-              v-model.number="obj.light.intensity"
-              @input="update(['light', 'intensity'], obj.light.intensity)"
-            />
+            <span class="field-label">Intensity ({{ obj.light.intensity }})</span>
+            <div class="slider-with-input">
+              <input
+                type="range"
+                min="0"
+                max="20"
+                step="0.1"
+                v-model.number="obj.light.intensity"
+                @input="update(['light', 'intensity'], obj.light.intensity)"
+                class="range-slider"
+              />
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                v-model.number="obj.light.intensity"
+                @input="update(['light', 'intensity'], obj.light.intensity)"
+                class="mini-num-input"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -591,5 +617,49 @@ const activeMaterial = computed(() => {
 .range-slider {
   flex: 1;
   accent-color: var(--accent);
+}
+
+.transform-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between !important;
+}
+
+.title-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lock-btn {
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.lock-btn:hover {
+  color: var(--text-bright);
+}
+
+.lock-btn.active {
+  background: #b91c1c;
+  color: #ffffff;
+  border-color: #ef4444;
+}
+
+.slider-with-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.mini-num-input {
+  width: 50px;
+  text-align: right;
 }
 </style>

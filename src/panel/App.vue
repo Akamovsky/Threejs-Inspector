@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { state, toggleWireframe, togglePicker, refresh } from './bridge';
+import { state, toggleWireframe, togglePicker, togglePointerLockBypass, refresh } from './bridge';
 import TreeView from './components/TreeView.vue';
 import CategoryView from './components/CategoryView.vue';
 import Inspector from './components/Inspector.vue';
@@ -13,7 +13,9 @@ import {
   Box,
   MousePointer,
   FolderTree,
-  Layers
+  Layers,
+  Lock,
+  Unlock
 } from 'lucide-vue-next';
 
 const explorerView = ref<'hierarchy' | 'categories'>('hierarchy');
@@ -47,6 +49,18 @@ const activeTab = ref<'inspector' | 'stats'>('inspector');
         >
           <MousePointer :size="12" />
           <span>{{ state.pickerActive ? 'Picking...' : 'Pick in 3D' }}</span>
+        </button>
+
+        <!-- Pointer Lock Bypass Toggle -->
+        <button
+          class="action-btn"
+          :class="{ active: state.pointerLockBypassed }"
+          @click="togglePointerLockBypass"
+          :title="state.pointerLockBypassed ? 'Pointer Lock is BYPASSED (Mouse is free). Click to allow game pointer lock.' : 'Click to bypass Pointer Lock (prevents FPS game mouse locking)'"
+        >
+          <Unlock v-if="state.pointerLockBypassed" :size="12" />
+          <Lock v-else :size="12" />
+          <span>{{ state.pointerLockBypassed ? 'Lock Bypassed' : 'Bypass Lock' }}</span>
         </button>
 
         <!-- Wireframe Global Toggle -->

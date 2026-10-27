@@ -3,7 +3,9 @@
   --bg-secondary: #252526;
   --bg-tertiary: #2d2d30;
   --bg-hover: #37373d;
-  --bg-selected: #094771;
+  --bg-selected: #0284c7;
+  --bg-selected-subtle: rgba(2, 132, 199, 0.25);
+  --border-selected: #38bdf8;
   --bg-active: #0e639c;
 
   --border-color: #3e3e42;
