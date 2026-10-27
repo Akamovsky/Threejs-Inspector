@@ -93,3 +93,76 @@ export interface ThreeSceneSummary {
   type: string;
   childrenCount: number;
 }
+
+// Category Items for Categorized View
+export interface CategoryMeshItem {
+  id: number;
+  uuid: string;
+  name: string;
+  type: string;
+  geometryType: string;
+  materialType: string;
+  materialColor?: string;
+  verticesCount: number;
+  facesCount: number;
+  visible: boolean;
+}
+
+export interface CategoryLightItem {
+  id: number;
+  uuid: string;
+  name: string;
+  type: string;
+  color: string;
+  intensity: number;
+  visible: boolean;
+}
+
+export interface CategoryCameraItem {
+  id: number;
+  uuid: string;
+  name: string;
+  type: string;
+  fov?: number;
+  visible: boolean;
+}
+
+export interface CategoryMaterialItem {
+  uuid: string;
+  name: string;
+  type: string;
+  color?: string;
+  wireframe?: boolean;
+  transparent?: boolean;
+  opacity?: number;
+  linkedObjectUuids: string[];
+}
+
+export interface CategoryTextureItem {
+  uuid: string;
+  name: string;
+  type: string;
+  width?: number;
+  height?: number;
+  format?: string;
+  mapping?: string;
+  linkedObjectUuids: string[];
+}
+
+export interface CategoryGeometryItem {
+  uuid: string;
+  name: string;
+  type: string;
+  verticesCount: number;
+  facesCount: number;
+  linkedObjectUuids: string[];
+}
+
+export interface CategorizedSceneData {
+  meshes: CategoryMeshItem[];
+  lights: CategoryLightItem[];
+  cameras: CategoryCameraItem[];
+  materials: CategoryMaterialItem[];
+  textures: CategoryTextureItem[];
+  geometries: CategoryGeometryItem[];
+}

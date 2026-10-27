@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import type { SerializedNode } from '../../types/three-data';
 import {
   state,
@@ -29,6 +29,23 @@ const currentDepth = computed(() => props.depth || 0);
 const isExpanded = ref(true);
 
 const isSelected = computed(() => state.selectedUuid === props.node.uuid);
+
+function containsSelected(node: SerializedNode, targetUuid: string | null): boolean {
+  if (!targetUuid) return false;
+  if (node.uuid === targetUuid) return true;
+  if (!node.children || node.children.length === 0) return false;
+  return node.children.some((child) => containsSelected(child, targetUuid));
+}
+
+watch(
+  () => state.selectedUuid,
+  (newUuid) => {
+    if (newUuid && containsSelected(props.node, newUuid)) {
+      isExpanded.value = true;
+    }
+  },
+  { immediate: true }
+);
 
 function toggleExpand(e: MouseEvent) {
   e.stopPropagation();

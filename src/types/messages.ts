@@ -1,4 +1,9 @@
-import type { SerializedNode, ObjectDetails, RendererStats } from './three-data';
+import type {
+  SerializedNode,
+  ObjectDetails,
+  RendererStats,
+  CategorizedSceneData
+} from './three-data';
 
 export const MESSAGE_SOURCE = {
   HOOK: 'three-inspector-hook',
@@ -14,9 +19,11 @@ export type ActionType =
   // Hook -> Extension
   | 'THREE_DETECTED'
   | 'SCENE_GRAPH_DATA'
+  | 'CATEGORIZED_DATA'
   | 'OBJECT_DETAILS_DATA'
   | 'STATS_UPDATE'
   | 'OBJECT_MUTATED'
+  | 'OBJECT_PICKED'
   // Extension -> Hook
   | 'REQUEST_SCENE_GRAPH'
   | 'SELECT_OBJECT'
@@ -25,6 +32,7 @@ export type ActionType =
   | 'INSPECT_IN_CONSOLE'
   | 'TOGGLE_HELPER'
   | 'TOGGLE_WIREFRAME'
+  | 'TOGGLE_PICKER'
   | 'PING'
   | 'PONG';
 
@@ -68,4 +76,12 @@ export interface ToggleHelperPayload {
   uuid: string;
   helper: 'box' | 'axes' | 'wireframe';
   enabled: boolean;
+}
+
+export interface TogglePickerPayload {
+  enabled: boolean;
+}
+
+export interface ObjectPickedPayload {
+  uuid: string;
 }

@@ -2,7 +2,8 @@ import { reactive, ref } from 'vue';
 import type {
   SerializedNode,
   ObjectDetails,
-  RendererStats
+  RendererStats,
+  CategorizedSceneData
 } from '../types/three-data';
 import {
   MESSAGE_SOURCE,
@@ -15,10 +16,12 @@ export const state = reactive({
   detected: false,
   version: '',
   scenes: [] as SerializedNode[],
+  categories: null as CategorizedSceneData | null,
   selectedUuid: null as string | null,
   selectedObject: null as ObjectDetails | null,
   stats: null as RendererStats | null,
   wireframeActive: false,
+  pickerActive: false,
   filterQuery: '',
   statusMessage: 'Waiting for Three.js scene...'
 });
@@ -74,6 +77,19 @@ function handleMessage(message: InspectorMessage) {
       }
       break;
 
+    case 'CATEGORIZED_DATA':
+      if (message.payload) {
+        state.categories = message.payload;
+      }
+      break;
+
+    case 'OBJECT_PICKED':
+      if (message.payload?.uuid) {
+        state.selectedUuid = message.payload.uuid;
+        state.pickerActive = false;
+      }
+      break;
+
     case 'OBJECT_DETAILS_DATA':
       if (message.payload) {
         state.selectedObject = message.payload;
@@ -125,6 +141,11 @@ export function inspectInConsole(uuid: string) {
 export function toggleWireframe() {
   state.wireframeActive = !state.wireframeActive;
   send('TOGGLE_WIREFRAME', { enabled: state.wireframeActive });
+}
+
+export function togglePicker() {
+  state.pickerActive = !state.pickerActive;
+  send('TOGGLE_PICKER', { enabled: state.pickerActive });
 }
 
 export function refresh() {

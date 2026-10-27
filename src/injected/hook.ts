@@ -5,7 +5,14 @@ import type {
   MaterialInfo,
   LightInfo,
   CameraInfo,
-  RendererStats
+  RendererStats,
+  CategorizedSceneData,
+  CategoryMeshItem,
+  CategoryLightItem,
+  CategoryCameraItem,
+  CategoryMaterialItem,
+  CategoryTextureItem,
+  CategoryGeometryItem
 } from '../types/three-data';
 import {
   MESSAGE_SOURCE,
@@ -29,6 +36,8 @@ import {
   // Helpers
   let currentHighlightHelper: any = null;
   let activeSelectedUuid: string | null = null;
+  let lastActiveCamera: any = null;
+  let pickerEnabled = false;
 
   // FPS calculation
   let frameCount = 0;
@@ -132,7 +141,154 @@ import {
     };
   }
 
-  // Emit full scene graph
+  // Extract categorized data (Meshes, Lights, Cameras, Materials, Textures, Geometries)
+  function extractCategorizedData(): CategorizedSceneData {
+    const meshes: CategoryMeshItem[] = [];
+    const lights: CategoryLightItem[] = [];
+    const cameras: CategoryCameraItem[] = [];
+    const materialMap = new Map<string, CategoryMaterialItem>();
+    const textureMap = new Map<string, CategoryTextureItem>();
+    const geometryMap = new Map<string, CategoryGeometryItem>();
+
+    for (const scene of registeredScenes) {
+      scene.traverse((obj: any) => {
+        if (!obj || !obj.isObject3D || obj.name === '__THREE_INSPECTOR_HELPER__') return;
+
+        // Meshes
+        if (obj.isMesh) {
+          let verticesCount = 0;
+          let facesCount = 0;
+          let geoType = 'None';
+          let matType = 'None';
+          let matColor: string | undefined;
+
+          if (obj.geometry) {
+            geoType = obj.geometry.type || 'BufferGeometry';
+            if (obj.geometry.attributes?.position) {
+              verticesCount = obj.geometry.attributes.position.count;
+            }
+            if (obj.geometry.index) {
+              facesCount = Math.floor(obj.geometry.index.count / 3);
+            } else if (verticesCount > 0) {
+              facesCount = Math.floor(verticesCount / 3);
+            }
+
+            const geoUuid = obj.geometry.uuid || `geo-${obj.id}`;
+            if (!geometryMap.has(geoUuid)) {
+              geometryMap.set(geoUuid, {
+                uuid: geoUuid,
+                name: obj.geometry.name || geoType,
+                type: geoType,
+                verticesCount,
+                facesCount,
+                linkedObjectUuids: [obj.uuid]
+              });
+            } else {
+              geometryMap.get(geoUuid)!.linkedObjectUuids.push(obj.uuid);
+            }
+          }
+
+          if (obj.material) {
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            matType = mats.map((m: any) => m.type || 'Material').join(', ');
+            if (mats[0]?.color) {
+              matColor = colorToHex(mats[0].color);
+            }
+
+            mats.forEach((m: any) => {
+              const matUuid = m.uuid || `mat-${obj.id}`;
+              if (!materialMap.has(matUuid)) {
+                materialMap.set(matUuid, {
+                  uuid: matUuid,
+                  name: m.name || m.type || 'Material',
+                  type: m.type || 'Material',
+                  color: m.color ? colorToHex(m.color) : undefined,
+                  wireframe: Boolean(m.wireframe),
+                  transparent: Boolean(m.transparent),
+                  opacity: typeof m.opacity === 'number' ? m.opacity : 1,
+                  linkedObjectUuids: [obj.uuid]
+                });
+              } else {
+                materialMap.get(matUuid)!.linkedObjectUuids.push(obj.uuid);
+              }
+
+              // Texture maps
+              const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
+              slots.forEach((slot) => {
+                const tex = m[slot];
+                if (tex && tex.isTexture) {
+                  const texUuid = tex.uuid || `tex-${slot}-${matUuid}`;
+                  if (!textureMap.has(texUuid)) {
+                    textureMap.set(texUuid, {
+                      uuid: texUuid,
+                      name: tex.name || `${m.name || 'Material'} ${slot}`,
+                      type: slot,
+                      width: tex.image?.width,
+                      height: tex.image?.height,
+                      format: tex.format ? String(tex.format) : undefined,
+                      mapping: tex.mapping ? String(tex.mapping) : undefined,
+                      linkedObjectUuids: [obj.uuid]
+                    });
+                  } else {
+                    textureMap.get(texUuid)!.linkedObjectUuids.push(obj.uuid);
+                  }
+                }
+              });
+            });
+          }
+
+          meshes.push({
+            id: obj.id,
+            uuid: obj.uuid,
+            name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Mesh (${obj.id})`),
+            type: obj.type || 'Mesh',
+            geometryType: geoType,
+            materialType: matType,
+            materialColor: matColor,
+            verticesCount,
+            facesCount,
+            visible: obj.visible !== false
+          });
+        }
+
+        // Lights
+        if (obj.isLight) {
+          lights.push({
+            id: obj.id,
+            uuid: obj.uuid,
+            name: obj.name || `Light (${obj.id})`,
+            type: obj.type || 'Light',
+            color: colorToHex(obj.color),
+            intensity: obj.intensity ?? 1,
+            visible: obj.visible !== false
+          });
+        }
+
+        // Cameras
+        if (obj.isCamera) {
+          cameras.push({
+            id: obj.id,
+            uuid: obj.uuid,
+            name: obj.name || `Camera (${obj.id})`,
+            type: obj.type || 'Camera',
+            fov: obj.fov,
+            visible: obj.visible !== false
+          });
+        }
+      });
+    }
+
+    return {
+      meshes,
+      lights,
+      cameras,
+      materials: Array.from(materialMap.values()),
+      textures: Array.from(textureMap.values()),
+      geometries: Array.from(geometryMap.values())
+    };
+  }
+
+  // Emit full scene graph & categorized data
   function emitSceneGraph() {
     const scenes: SerializedNode[] = [];
     for (const scene of registeredScenes) {
@@ -142,6 +298,7 @@ import {
       }
     }
     emit('SCENE_GRAPH_DATA', { scenes });
+    emit('CATEGORIZED_DATA', extractCategorizedData());
   }
 
   // Extract single material info
@@ -472,11 +629,124 @@ import {
       THREE.WebGLRenderer.prototype.render = function (scene: any, camera: any) {
         registerRenderer(this);
         if (scene) registerScene(scene);
+        if (camera) lastActiveCamera = camera;
         tickRender(this);
         return originalRender.apply(this, arguments as any);
       };
 
       emitDetection();
+    }
+  }
+
+  // Raycaster Picker Handlers
+  function getActiveCanvas(): HTMLCanvasElement | null {
+    for (const r of registeredRenderers) {
+      if (r && r.domElement) return r.domElement;
+    }
+    return document.querySelector('canvas');
+  }
+
+  function onPickerPointerMove(e: PointerEvent) {
+    if (!pickerEnabled || !lastActiveCamera) return;
+    const canvas = e.currentTarget as HTMLCanvasElement;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouse = {
+      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      y: -((e.clientY - rect.top) / rect.height) * 2 + 1
+    };
+
+    const THREE = (window as any).THREE;
+    if (!THREE || !THREE.Raycaster) return;
+
+    try {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mouse, lastActiveCamera);
+
+      const targets: any[] = [];
+      for (const scene of registeredScenes) {
+        scene.traverse((obj: any) => {
+          if (obj.isMesh && obj.visible && obj.name !== '__THREE_INSPECTOR_HELPER__') {
+            targets.push(obj);
+          }
+        });
+      }
+
+      const intersects = raycaster.intersectObjects(targets, false);
+      if (intersects.length > 0) {
+        const hit = intersects[0].object;
+        setHighlight(hit.uuid);
+      } else {
+        setHighlight(activeSelectedUuid);
+      }
+    } catch (err) {}
+  }
+
+  function onPickerClick(e: MouseEvent) {
+    if (!pickerEnabled || !lastActiveCamera) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const canvas = e.currentTarget as HTMLCanvasElement;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouse = {
+      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      y: -((e.clientY - rect.top) / rect.height) * 2 + 1
+    };
+
+    const THREE = (window as any).THREE;
+    if (!THREE || !THREE.Raycaster) return;
+
+    try {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mouse, lastActiveCamera);
+
+      const targets: any[] = [];
+      for (const scene of registeredScenes) {
+        scene.traverse((obj: any) => {
+          if (obj.isMesh && obj.visible && obj.name !== '__THREE_INSPECTOR_HELPER__') {
+            targets.push(obj);
+          }
+        });
+      }
+
+      const intersects = raycaster.intersectObjects(targets, false);
+      if (intersects.length > 0) {
+        const hit = intersects[0].object;
+        activeSelectedUuid = hit.uuid;
+        setHighlight(hit.uuid);
+
+        // Notify DevTools panel
+        emit('OBJECT_PICKED', { uuid: hit.uuid });
+
+        const details = extractObjectDetails(hit);
+        if (details) {
+          emit('OBJECT_DETAILS_DATA', details);
+        }
+      }
+    } catch (err) {}
+
+    // Disable picker after selection
+    setPickerMode(false);
+  }
+
+  function setPickerMode(enabled: boolean) {
+    pickerEnabled = enabled;
+    const canvas = getActiveCanvas();
+    if (!canvas) return;
+
+    if (enabled) {
+      canvas.style.cursor = 'crosshair';
+      canvas.addEventListener('pointermove', onPickerPointerMove, true);
+      canvas.addEventListener('click', onPickerClick, true);
+    } else {
+      canvas.style.cursor = '';
+      canvas.removeEventListener('pointermove', onPickerPointerMove, true);
+      canvas.removeEventListener('click', onPickerClick, true);
+      setHighlight(activeSelectedUuid);
     }
   }
 
@@ -535,6 +805,12 @@ import {
       case 'TOGGLE_WIREFRAME':
         if (typeof payload?.enabled === 'boolean') {
           toggleWireframe(payload.enabled);
+        }
+        break;
+
+      case 'TOGGLE_PICKER':
+        if (typeof payload?.enabled === 'boolean') {
+          setPickerMode(payload.enabled);
         }
         break;
     }
