@@ -408,8 +408,12 @@ import {
   function inspectInConsole(uuid: string) {
     const obj = uuidToObjectMap.get(uuid);
     if (!obj) return;
-    (window as any).$three = obj;
-    (window as any).$selected = obj;
+    try {
+      (window as any).$three = obj;
+      (window as any).$selected = obj;
+    } catch (e) {
+      // Ignore if window properties are protected
+    }
     console.log(
       '%c[Three.js Inspector]%c Selected object assigned to %c$three%c and %c$selected%c:',
       'background: #3b82f6; color: white; padding: 2px 4px; border-radius: 3px; font-weight: bold;',
@@ -536,17 +540,72 @@ import {
     }
   });
 
-  // Public DevTools API in page context for manual or programmatic registration
-  (window as any).__THREE_DEVTOOLS__ = {
-    registerScene,
-    registerRenderer,
-    getScenes: () => Array.from(registeredScenes),
-    getRenderers: () => Array.from(registeredRenderers),
-    refresh: () => {
-      emitDetection();
-      emitSceneGraph();
+  // Safe setup for Three.js DevTools hook protocol
+  function setupDevToolsHook() {
+    try {
+      let devtools = (window as any).__THREE_DEVTOOLS__;
+
+      if (!devtools) {
+        // Create standard Three.js EventTarget hook if not present
+        devtools = typeof EventTarget !== 'undefined' ? new EventTarget() : {};
+        try {
+          Object.defineProperty(window, '__THREE_DEVTOOLS__', {
+            value: devtools,
+            writable: true,
+            configurable: true,
+            enumerable: false
+          });
+        } catch {
+          try {
+            (window as any).__THREE_DEVTOOLS__ = devtools;
+          } catch {}
+        }
+      }
+
+      // Listen to native Three.js 'observe' events (Three.js r120+ dispatches to __THREE_DEVTOOLS__)
+      if (devtools && typeof devtools.addEventListener === 'function') {
+        devtools.addEventListener('observe', (event: any) => {
+          const detail = event?.detail;
+          if (detail) {
+            if (detail.isScene || detail.isObject3D) registerScene(detail);
+            if (detail.render && detail.domElement) registerRenderer(detail);
+          }
+        });
+      }
+
+      // Safely attach helper methods if writable
+      if (devtools && typeof devtools === 'object') {
+        try {
+          devtools.registerScene = registerScene;
+          devtools.registerRenderer = registerRenderer;
+          devtools.getScenes = () => Array.from(registeredScenes);
+          devtools.getRenderers = () => Array.from(registeredRenderers);
+          devtools.refresh = () => {
+            emitDetection();
+            emitSceneGraph();
+          };
+        } catch {}
+      }
+
+      // Also set isolated property for our inspector
+      try {
+        (window as any).__THREE_INSPECTOR__ = {
+          registerScene,
+          registerRenderer,
+          getScenes: () => Array.from(registeredScenes),
+          getRenderers: () => Array.from(registeredRenderers),
+          refresh: () => {
+            emitDetection();
+            emitSceneGraph();
+          }
+        };
+      } catch {}
+    } catch (e) {
+      // Keep hook functioning even if window properties are strictly locked down
     }
-  };
+  }
+
+  setupDevToolsHook();
 
   // Attempt initial hook and watch for THREE appearing
   hookRendererPrototype();
