@@ -216,6 +216,13 @@ const activeMaterial = computed(() => {
             />
             Receive Shadow
           </label>
+          <label class="flag-item">
+            <input
+              type="checkbox"
+              @change="update(['wireframeSubtree'], ($event.target as HTMLInputElement).checked)"
+            />
+            Wireframe
+          </label>
         </div>
       </div>
 
@@ -267,12 +274,12 @@ const activeMaterial = computed(() => {
           </div>
 
           <!-- Wireframe -->
-          <div v-if="typeof activeMaterial.wireframe === 'boolean'" class="field-row">
+          <div class="field-row">
             <span class="field-label">Wireframe</span>
             <input
               type="checkbox"
-              v-model="activeMaterial.wireframe"
-              @change="update(['material', 'wireframe'], activeMaterial.wireframe)"
+              :checked="Boolean(activeMaterial.wireframe)"
+              @change="update(['material', 'wireframe'], !Boolean(activeMaterial.wireframe))"
             />
           </div>
 

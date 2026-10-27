@@ -75,21 +75,32 @@ import {
     window.postMessage(message, '*');
   }
 
-  // Intercept Pointer Lock (bypasses pointer lock conflicts in FPS games)
-  if (typeof Element !== 'undefined' && Element.prototype.requestPointerLock) {
-    const originalRequestPointerLock = Element.prototype.requestPointerLock;
-    Element.prototype.requestPointerLock = function (options?: any) {
-      if (pickerEnabled || bypassPointerLock) {
-        if (document.pointerLockElement) {
-          try {
-            document.exitPointerLock();
-          } catch (e) {}
+  // Hook all pointer lock entry points
+  function hookPointerLock() {
+    const patchObj = (proto: any) => {
+      if (!proto || !proto.requestPointerLock || proto.__INSPECTOR_PL_HOOKED__) return;
+      proto.__INSPECTOR_PL_HOOKED__ = true;
+      const orig = proto.requestPointerLock;
+      proto.requestPointerLock = function () {
+        if (pickerEnabled || bypassPointerLock) {
+          if (document.pointerLockElement) {
+            try {
+              document.exitPointerLock();
+            } catch (e) {}
+          }
+          return Promise.resolve();
         }
-        return Promise.resolve();
-      }
-      return originalRequestPointerLock.apply(this, arguments as any);
+        return orig.apply(this, arguments as any);
+      };
     };
+
+    if (typeof Element !== 'undefined') patchObj(Element.prototype);
+    if (typeof HTMLElement !== 'undefined') patchObj(HTMLElement.prototype);
+    if (typeof HTMLBodyElement !== 'undefined') patchObj(HTMLBodyElement.prototype);
+    if (typeof HTMLCanvasElement !== 'undefined') patchObj(HTMLCanvasElement.prototype);
+    if (typeof document !== 'undefined') patchObj(document);
   }
+  hookPointerLock();
 
   // Color helper: Three.js Color -> Hex string
   function colorToHex(color: any): string {
@@ -278,8 +289,8 @@ import {
       scene.traverse((obj: any) => {
         if (!obj || !obj.isObject3D || obj.name === '__THREE_INSPECTOR_HELPER__') return;
 
-        // Meshes
-        if (obj.isMesh) {
+        // Meshes & InstancedMeshes
+        if (obj.isMesh || obj.isInstancedMesh) {
           let verticesCount = 0;
           let facesCount = 0;
           let geoType = 'None';
@@ -380,10 +391,10 @@ import {
           lights.push({
             id: obj.id,
             uuid: obj.uuid,
-            name: obj.name || `Light (${obj.id})`,
+            name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Light (${obj.id})`),
             type: obj.type || 'Light',
             color: colorToHex(obj.color),
-            intensity: obj.intensity ?? 1,
+            intensity: typeof obj.intensity === 'number' ? obj.intensity : 1,
             visible: obj.visible !== false
           });
         }
@@ -437,7 +448,7 @@ import {
       metalness: typeof mat.metalness === 'number' ? mat.metalness : undefined,
       opacity: typeof mat.opacity === 'number' ? mat.opacity : 1,
       transparent: Boolean(mat.transparent),
-      wireframe: typeof mat.wireframe === 'boolean' ? mat.wireframe : undefined,
+      wireframe: Boolean(mat.wireframe),
       visible: mat.visible !== false,
       depthTest: mat.depthTest !== false,
       depthWrite: mat.depthWrite !== false
@@ -494,7 +505,7 @@ import {
     if (obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
       light = {
         color: colorToHex(obj.color),
-        intensity: obj.intensity ?? 1,
+        intensity: typeof obj.intensity === 'number' ? obj.intensity : 1,
         distance: obj.distance,
         decay: obj.decay,
         angle: obj.angle,
@@ -569,14 +580,13 @@ import {
     try {
       let helper: any = null;
 
-      if (target.isMesh && target.geometry) {
+      if ((target.isMesh || target.isInstancedMesh) && target.geometry) {
         helper = new BoxHelper(target, 0x00ffff);
         helper.material.depthTest = false;
         helper.material.transparent = true;
         helper.material.opacity = 0.9;
         helper.renderOrder = 999999;
       } else {
-        // Light, Camera, or Group indicator box
         const worldPos = new Vector3();
         if (typeof target.getWorldPosition === 'function') {
           target.getWorldPosition(worldPos);
@@ -600,7 +610,6 @@ import {
 
       helper.name = '__THREE_INSPECTOR_HELPER__';
 
-      // Find root scene
       let rootScene = Array.from(registeredScenes)[0];
       let p = target;
       while (p) {
@@ -637,7 +646,6 @@ import {
       obj.updateMatrixWorld(true);
       if (obj.isCamera) obj.updateProjectionMatrix?.();
 
-      // Update locked transform if currently pinned
       const locked = lockedTransforms.get(uuid);
       if (locked) {
         if (!locked.position) locked.position = { x: obj.position.x, y: obj.position.y, z: obj.position.z };
@@ -675,6 +683,16 @@ import {
       obj.castShadow = Boolean(value);
     } else if (rootProp === 'receiveShadow') {
       obj.receiveShadow = Boolean(value);
+    } else if (rootProp === 'wireframeSubtree') {
+      obj.traverse((child: any) => {
+        if (child.material) {
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach((m: any) => {
+            m.wireframe = Boolean(value);
+            m.needsUpdate = true;
+          });
+        }
+      });
     } else if (rootProp === 'material' && obj.material) {
       const mat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
       if (subProp === 'color') {
@@ -692,7 +710,7 @@ import {
         mat.visible = Boolean(value);
       }
       mat.needsUpdate = true;
-    } else if (rootProp === 'light') {
+    } else if (rootProp === 'light' || obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
       if (subProp === 'color') {
         hexToColor(obj.color, value);
       } else if (subProp === 'intensity') {
@@ -729,16 +747,15 @@ import {
     }
   }
 
-  // Toggle wireframe on entire scene
+  // Toggle wireframe on entire scene with shader update
   function toggleWireframe(enabled: boolean) {
     for (const scene of registeredScenes) {
       scene.traverse((node: any) => {
         if (node.material) {
           const materials = Array.isArray(node.material) ? node.material : [node.material];
           materials.forEach((m: any) => {
-            if ('wireframe' in m) {
-              m.wireframe = enabled;
-            }
+            m.wireframe = enabled;
+            m.needsUpdate = true;
           });
         }
       });
@@ -812,73 +829,25 @@ import {
     }
   }
 
-  // 3D Canvas Raycaster Picker Handlers
-  function onPickerPointerMove(e: PointerEvent) {
-    if (!pickerEnabled) return;
-    const camera = getActiveCamera();
-    if (!camera) return;
-
-    const canvas = getActiveCanvas();
-    const mouse = new Vector2();
-    if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    } else {
-      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    }
-
-    try {
-      const raycaster = new Raycaster();
-      raycaster.setFromCamera(mouse, camera);
-
-      const targets: any[] = [];
-      for (const scene of registeredScenes) {
-        scene.traverse((obj: any) => {
-          if (obj.isMesh && obj.visible && obj.name !== '__THREE_INSPECTOR_HELPER__') {
-            targets.push(obj);
-          }
-        });
-      }
-
-      const intersects = raycaster.intersectObjects(targets, true);
-      if (intersects.length > 0) {
-        const hit = intersects[0].object;
-        setHighlight(hit.uuid);
-      } else {
-        setHighlight(activeSelectedUuid);
-      }
-    } catch (err) {}
-  }
-
-  function onPickerClick(e: MouseEvent) {
-    if (!pickerEnabled) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-
-    if (document.pointerLockElement) {
-      try {
-        document.exitPointerLock();
-      } catch (err) {}
-    }
-
+  // 3D Canvas Raycasting implementation
+  function performRaycastAt(clientX: number, clientY: number): string | null {
     const camera = getActiveCamera();
     if (!camera) {
-      setPickerMode(false);
-      return;
+      console.warn('[Three.js Inspector] No active camera found for picking');
+      return null;
     }
+
+    camera.updateMatrixWorld(true);
 
     const canvas = getActiveCanvas();
     const mouse = new Vector2();
     if (canvas) {
       const rect = canvas.getBoundingClientRect();
-      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     } else {
-      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      mouse.x = (clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(clientY / window.innerHeight) * 2 + 1;
     }
 
     try {
@@ -888,7 +857,11 @@ import {
       const targets: any[] = [];
       for (const scene of registeredScenes) {
         scene.traverse((obj: any) => {
-          if (obj.isMesh && obj.visible && obj.name !== '__THREE_INSPECTOR_HELPER__') {
+          if (
+            (obj.isMesh || obj.isInstancedMesh || obj.isLine || obj.isPoints) &&
+            obj.visible &&
+            obj.name !== '__THREE_INSPECTOR_HELPER__'
+          ) {
             targets.push(obj);
           }
         });
@@ -900,19 +873,47 @@ import {
         activeSelectedUuid = hit.uuid;
         setHighlight(hit.uuid);
 
+        if ((window as any).__THREE_INSPECTOR__) {
+          (window as any).__THREE_INSPECTOR__.lastPickedObject = hit.uuid;
+        }
+
         emit('OBJECT_PICKED', { uuid: hit.uuid });
 
         const details = extractObjectDetails(hit);
         if (details) {
           emit('OBJECT_DETAILS_DATA', details);
         }
+        return hit.uuid;
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('[Three.js Inspector] Raycasting error:', err);
+    }
+    return null;
+  }
 
+  // Unified global picker event handlers attached at window capture phase
+  function onGlobalPickerMove(e: PointerEvent) {
+    if (!pickerEnabled) return;
+    performRaycastAt(e.clientX, e.clientY);
+  }
+
+  function onGlobalPickerClick(e: MouseEvent) {
+    if (!pickerEnabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+
+    if (document.pointerLockElement) {
+      try {
+        document.exitPointerLock();
+      } catch (err) {}
+    }
+
+    performRaycastAt(e.clientX, e.clientY);
     setPickerMode(false);
   }
 
-  function onPickerCapture(e: MouseEvent) {
+  function onGlobalPickerTrap(e: Event) {
     if (pickerEnabled) {
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -934,23 +935,27 @@ import {
           document.exitPointerLock();
         } catch (e) {}
       }
-      if (canvas) {
-        canvas.style.cursor = 'crosshair';
-        canvas.addEventListener('pointermove', onPickerPointerMove, true);
-        canvas.addEventListener('click', onPickerClick, true);
-      }
-      window.addEventListener('mousedown', onPickerCapture, true);
-      window.addEventListener('pointerdown', onPickerCapture, true);
-      window.addEventListener('click', onPickerCapture, true);
+
+      document.body.style.cursor = 'crosshair';
+      if (canvas) canvas.style.cursor = 'crosshair';
+
+      window.addEventListener('click', onGlobalPickerClick, true);
+      window.addEventListener('pointermove', onGlobalPickerMove, true);
+      window.addEventListener('mousedown', onGlobalPickerTrap, true);
+      window.addEventListener('pointerdown', onGlobalPickerTrap, true);
+      window.addEventListener('mouseup', onGlobalPickerTrap, true);
+      window.addEventListener('pointerup', onGlobalPickerTrap, true);
     } else {
-      if (canvas) {
-        canvas.style.cursor = '';
-        canvas.removeEventListener('pointermove', onPickerPointerMove, true);
-        canvas.removeEventListener('click', onPickerClick, true);
-      }
-      window.removeEventListener('mousedown', onPickerCapture, true);
-      window.removeEventListener('pointerdown', onPickerCapture, true);
-      window.removeEventListener('click', onPickerCapture, true);
+      document.body.style.cursor = '';
+      if (canvas) canvas.style.cursor = '';
+
+      window.removeEventListener('click', onGlobalPickerClick, true);
+      window.removeEventListener('pointermove', onGlobalPickerMove, true);
+      window.removeEventListener('mousedown', onGlobalPickerTrap, true);
+      window.removeEventListener('pointerdown', onGlobalPickerTrap, true);
+      window.removeEventListener('mouseup', onGlobalPickerTrap, true);
+      window.removeEventListener('pointerup', onGlobalPickerTrap, true);
+
       setHighlight(activeSelectedUuid);
     }
   }
@@ -1119,16 +1124,41 @@ import {
         } catch {}
       }
 
+      // Public API exposed on window.__THREE_INSPECTOR__ for direct DevTools panel eval
       try {
         (window as any).__THREE_INSPECTOR__ = {
           registerScene,
           registerRenderer,
+          updateProperty: (uuid: string, path: string[], value: any) => {
+            updateObjectProperty({ uuid, path, value });
+          },
+          toggleWireframe,
+          setPickerMode,
+          setPointerLockBypass: (enabled: boolean) => {
+            bypassPointerLock = enabled;
+            if (enabled && document.pointerLockElement) {
+              try {
+                document.exitPointerLock();
+              } catch (e) {}
+            }
+          },
+          selectObject: (uuid: string) => {
+            activeSelectedUuid = uuid;
+            const obj = findObjectByUuid(uuid);
+            if (obj) {
+              setHighlight(uuid);
+              return extractObjectDetails(obj);
+            }
+            return null;
+          },
+          setHighlight,
           getScenes: () => Array.from(registeredScenes),
           getRenderers: () => Array.from(registeredRenderers),
           refresh: () => {
             emitDetection();
             emitSceneGraph();
-          }
+          },
+          lastPickedObject: null as string | null
         };
       } catch {}
     } catch (e) {}
