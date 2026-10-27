@@ -270,6 +270,18 @@ export function toggleLockTransform(uuid: string, position?: { x: number; y: num
   }
 }
 
+export function resetPropertyOverrides(uuid: string) {
+  state.lockedTransformUuids.delete(uuid);
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.unpinObjectProperties(${JSON.stringify(uuid)});
+    }
+  `;
+  executeInPage(script);
+  send('RESET_PROPERTY_OVERRIDES', { uuid });
+  refresh();
+}
+
 export function refresh() {
   const script = `
     if (window.__THREE_INSPECTOR__) {

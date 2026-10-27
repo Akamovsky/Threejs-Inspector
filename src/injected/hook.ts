@@ -48,15 +48,118 @@ import {
   let pickerEnabled = false;
   let bypassPointerLock = false;
 
-  // Transform lock state (prevents game loops from overwriting user changes)
-  const lockedTransforms = new Map<
-    string,
-    {
-      position?: { x: number; y: number; z: number };
-      rotationDegrees?: { x: number; y: number; z: number };
-      scale?: { x: number; y: number; z: number };
+  // Persistent property overrides (prevent game loops / animations from reverting user edits)
+  const pinnedOverrides = new Map<string, Record<string, any>>();
+
+  function pinProperty(obj: any, propPath: string, value: any) {
+    if (!obj || !obj.uuid) return;
+    let overrides = pinnedOverrides.get(obj.uuid);
+    if (!overrides) {
+      overrides = {};
+      pinnedOverrides.set(obj.uuid, overrides);
     }
-  >();
+    overrides[propPath] = value;
+
+    // Hard override getters/setters so game loop setters cannot clobber the user's values
+    if (propPath === 'light.intensity') {
+      let currentVal = Number(value);
+      obj.__inspector_intensity = currentVal;
+      try {
+        Object.defineProperty(obj, 'intensity', {
+          get() {
+            return obj.__inspector_intensity !== undefined ? obj.__inspector_intensity : currentVal;
+          },
+          set(v) {
+            if (obj.__inspector_intensity !== undefined) return;
+            currentVal = v;
+          },
+          configurable: true,
+          enumerable: true
+        });
+      } catch (e) {
+        obj.intensity = currentVal;
+      }
+    } else if (propPath === 'position.x' && obj.position) {
+      let currentVal = Number(value);
+      obj.position.__inspector_x = currentVal;
+      try {
+        Object.defineProperty(obj.position, 'x', {
+          get() {
+            return obj.position.__inspector_x !== undefined ? obj.position.__inspector_x : currentVal;
+          },
+          set(v) {
+            if (obj.position.__inspector_x !== undefined) return;
+            currentVal = v;
+          },
+          configurable: true,
+          enumerable: true
+        });
+      } catch (e) {
+        obj.position.x = currentVal;
+      }
+    } else if (propPath === 'position.y' && obj.position) {
+      let currentVal = Number(value);
+      obj.position.__inspector_y = currentVal;
+      try {
+        Object.defineProperty(obj.position, 'y', {
+          get() {
+            return obj.position.__inspector_y !== undefined ? obj.position.__inspector_y : currentVal;
+          },
+          set(v) {
+            if (obj.position.__inspector_y !== undefined) return;
+            currentVal = v;
+          },
+          configurable: true,
+          enumerable: true
+        });
+      } catch (e) {
+        obj.position.y = currentVal;
+      }
+    } else if (propPath === 'position.z' && obj.position) {
+      let currentVal = Number(value);
+      obj.position.__inspector_z = currentVal;
+      try {
+        Object.defineProperty(obj.position, 'z', {
+          get() {
+            return obj.position.__inspector_z !== undefined ? obj.position.__inspector_z : currentVal;
+          },
+          set(v) {
+            if (obj.position.__inspector_z !== undefined) return;
+            currentVal = v;
+          },
+          configurable: true,
+          enumerable: true
+        });
+      } catch (e) {
+        obj.position.z = currentVal;
+      }
+    }
+  }
+
+  function unpinObjectProperties(uuid: string) {
+    const obj = findObjectByUuid(uuid);
+    pinnedOverrides.delete(uuid);
+    if (!obj) return;
+
+    if (obj.__inspector_intensity !== undefined) {
+      delete obj.__inspector_intensity;
+      delete obj.intensity;
+    }
+    if (obj.position) {
+      if (obj.position.__inspector_x !== undefined) {
+        delete obj.position.__inspector_x;
+        delete obj.position.x;
+      }
+      if (obj.position.__inspector_y !== undefined) {
+        delete obj.position.__inspector_y;
+        delete obj.position.y;
+      }
+      if (obj.position.__inspector_z !== undefined) {
+        delete obj.position.__inspector_z;
+        delete obj.position.z;
+      }
+    }
+  }
 
   // FPS calculation
   let frameCount = 0;
@@ -199,8 +302,8 @@ import {
       if (camera) lastActiveCamera = camera;
       registerRenderer(this);
 
-      // Force locked transforms right before rendering so game loops don't revert them
-      applyLockedTransforms();
+      // Force pinned property overrides right before frame render
+      applyPinnedOverrides();
 
       tickRender(this);
 
@@ -208,25 +311,35 @@ import {
     };
   }
 
-  // Apply user-locked transforms right before frame render
-  function applyLockedTransforms() {
-    for (const [uuid, locked] of lockedTransforms.entries()) {
+  // Apply user-pinned property overrides right before frame render
+  function applyPinnedOverrides() {
+    for (const [uuid, overrides] of pinnedOverrides.entries()) {
       const obj = findObjectByUuid(uuid);
       if (!obj) continue;
 
-      if (locked.position) {
-        obj.position.set(locked.position.x, locked.position.y, locked.position.z);
+      if (overrides['position.x'] !== undefined) obj.position.x = overrides['position.x'];
+      if (overrides['position.y'] !== undefined) obj.position.y = overrides['position.y'];
+      if (overrides['position.z'] !== undefined) obj.position.z = overrides['position.z'];
+      if (overrides['rotationDegrees.x'] !== undefined) {
+        obj.rotation.x = (overrides['rotationDegrees.x'] * Math.PI) / 180;
       }
-      if (locked.rotationDegrees) {
-        obj.rotation.set(
-          (locked.rotationDegrees.x * Math.PI) / 180,
-          (locked.rotationDegrees.y * Math.PI) / 180,
-          (locked.rotationDegrees.z * Math.PI) / 180
-        );
+      if (overrides['rotationDegrees.y'] !== undefined) {
+        obj.rotation.y = (overrides['rotationDegrees.y'] * Math.PI) / 180;
       }
-      if (locked.scale) {
-        obj.scale.set(locked.scale.x, locked.scale.y, locked.scale.z);
+      if (overrides['rotationDegrees.z'] !== undefined) {
+        obj.rotation.z = (overrides['rotationDegrees.z'] * Math.PI) / 180;
       }
+      if (overrides['scale.x'] !== undefined) obj.scale.x = overrides['scale.x'];
+      if (overrides['scale.y'] !== undefined) obj.scale.y = overrides['scale.y'];
+      if (overrides['scale.z'] !== undefined) obj.scale.z = overrides['scale.z'];
+      if (overrides['light.intensity'] !== undefined) {
+        obj.intensity = overrides['light.intensity'];
+        obj.visible = true;
+      }
+      if (overrides['light.color'] !== undefined) {
+        hexToColor(obj.color, overrides['light.color']);
+      }
+      if (overrides['visible'] !== undefined) obj.visible = overrides['visible'];
 
       obj.matrixAutoUpdate = true;
       obj.matrixWorldNeedsUpdate = true;
@@ -639,45 +752,30 @@ import {
     const [rootProp, subProp] = path;
 
     if (rootProp === 'position' && subProp) {
+      pinProperty(obj, `position.${subProp}`, Number(value));
       obj.position[subProp] = Number(value);
       obj.matrixAutoUpdate = true;
       obj.matrixWorldNeedsUpdate = true;
       obj.updateMatrix();
       obj.updateMatrixWorld(true);
       if (obj.isCamera) obj.updateProjectionMatrix?.();
-
-      const locked = lockedTransforms.get(uuid);
-      if (locked) {
-        if (!locked.position) locked.position = { x: obj.position.x, y: obj.position.y, z: obj.position.z };
-        (locked.position as any)[subProp] = Number(value);
-      }
     } else if (rootProp === 'rotationDegrees' && subProp) {
-      const rad = (Number(value) * Math.PI) / 180;
-      obj.rotation[subProp] = rad;
+      pinProperty(obj, `rotationDegrees.${subProp}`, Number(value));
+      obj.rotation[subProp] = (Number(value) * Math.PI) / 180;
       obj.matrixAutoUpdate = true;
       obj.matrixWorldNeedsUpdate = true;
       obj.updateMatrix();
       obj.updateMatrixWorld(true);
       if (obj.isCamera) obj.updateProjectionMatrix?.();
-
-      const locked = lockedTransforms.get(uuid);
-      if (locked) {
-        if (!locked.rotationDegrees) locked.rotationDegrees = { x: 0, y: 0, z: 0 };
-        (locked.rotationDegrees as any)[subProp] = Number(value);
-      }
     } else if (rootProp === 'scale' && subProp) {
+      pinProperty(obj, `scale.${subProp}`, Number(value));
       obj.scale[subProp] = Number(value);
       obj.matrixAutoUpdate = true;
       obj.matrixWorldNeedsUpdate = true;
       obj.updateMatrix();
       obj.updateMatrixWorld(true);
-
-      const locked = lockedTransforms.get(uuid);
-      if (locked) {
-        if (!locked.scale) locked.scale = { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z };
-        (locked.scale as any)[subProp] = Number(value);
-      }
     } else if (rootProp === 'visible') {
+      pinProperty(obj, 'visible', Boolean(value));
       obj.visible = Boolean(value);
     } else if (rootProp === 'castShadow') {
       obj.castShadow = Boolean(value);
@@ -712,9 +810,12 @@ import {
       mat.needsUpdate = true;
     } else if (rootProp === 'light' || obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
       if (subProp === 'color') {
+        pinProperty(obj, 'light.color', value);
         hexToColor(obj.color, value);
       } else if (subProp === 'intensity') {
+        pinProperty(obj, 'light.intensity', Number(value));
         obj.intensity = Number(value);
+        obj.visible = true;
       } else if (subProp === 'distance') {
         obj.distance = Number(value);
       } else if (subProp === 'decay') {
@@ -897,7 +998,7 @@ import {
     performRaycastAt(e.clientX, e.clientY);
   }
 
-  function onGlobalPickerClick(e: MouseEvent) {
+  function onGlobalPickerPointerDown(e: any) {
     if (!pickerEnabled) return;
     e.preventDefault();
     e.stopPropagation();
@@ -939,20 +1040,20 @@ import {
       document.body.style.cursor = 'crosshair';
       if (canvas) canvas.style.cursor = 'crosshair';
 
-      window.addEventListener('click', onGlobalPickerClick, true);
+      window.addEventListener('pointerdown', onGlobalPickerPointerDown, true);
+      window.addEventListener('mousedown', onGlobalPickerPointerDown, true);
       window.addEventListener('pointermove', onGlobalPickerMove, true);
-      window.addEventListener('mousedown', onGlobalPickerTrap, true);
-      window.addEventListener('pointerdown', onGlobalPickerTrap, true);
+      window.addEventListener('click', onGlobalPickerTrap, true);
       window.addEventListener('mouseup', onGlobalPickerTrap, true);
       window.addEventListener('pointerup', onGlobalPickerTrap, true);
     } else {
       document.body.style.cursor = '';
       if (canvas) canvas.style.cursor = '';
 
-      window.removeEventListener('click', onGlobalPickerClick, true);
+      window.removeEventListener('pointerdown', onGlobalPickerPointerDown, true);
+      window.removeEventListener('mousedown', onGlobalPickerPointerDown, true);
       window.removeEventListener('pointermove', onGlobalPickerMove, true);
-      window.removeEventListener('mousedown', onGlobalPickerTrap, true);
-      window.removeEventListener('pointerdown', onGlobalPickerTrap, true);
+      window.removeEventListener('click', onGlobalPickerTrap, true);
       window.removeEventListener('mouseup', onGlobalPickerTrap, true);
       window.removeEventListener('pointerup', onGlobalPickerTrap, true);
 
@@ -971,7 +1072,7 @@ import {
         registerRenderer(this);
         if (scene) registerScene(scene);
         if (camera) lastActiveCamera = camera;
-        applyLockedTransforms();
+        applyPinnedOverrides();
         tickRender(this);
         return originalRender.apply(this, arguments as any);
       };
@@ -1024,6 +1125,12 @@ import {
         }
         break;
 
+      case 'RESET_PROPERTY_OVERRIDES':
+        if (payload?.uuid) {
+          unpinObjectProperties(payload.uuid);
+        }
+        break;
+
       case 'INSPECT_IN_CONSOLE':
         if (payload?.uuid) {
           inspectInConsole(payload.uuid);
@@ -1049,18 +1156,6 @@ import {
             try {
               document.exitPointerLock();
             } catch (e) {}
-          }
-        }
-        break;
-
-      case 'LOCK_TRANSFORM':
-        if (payload?.uuid) {
-          if (payload.enabled) {
-            const obj = findObjectByUuid(payload.uuid);
-            const pos = payload.position || (obj ? { x: obj.position.x, y: obj.position.y, z: obj.position.z } : undefined);
-            lockedTransforms.set(payload.uuid, { position: pos });
-          } else {
-            lockedTransforms.delete(payload.uuid);
           }
         }
         break;
@@ -1132,6 +1227,7 @@ import {
           updateProperty: (uuid: string, path: string[], value: any) => {
             updateObjectProperty({ uuid, path, value });
           },
+          unpinObjectProperties,
           toggleWireframe,
           setPickerMode,
           setPointerLockBypass: (enabled: boolean) => {

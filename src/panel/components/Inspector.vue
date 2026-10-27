@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { state, updateProperty, inspectInConsole, toggleLockTransform } from '../bridge';
+import { state, updateProperty, inspectInConsole, toggleLockTransform, resetPropertyOverrides } from '../bridge';
 import {
   Terminal,
   Move,
   RotateCw,
+  RotateCcw,
   Maximize2,
   Box,
   Palette,
@@ -68,16 +69,16 @@ const activeMaterial = computed(() => {
             <Move :size="13" class="section-icon" />
             Transform
           </div>
-          <button
-            class="lock-btn"
-            :class="{ active: state.lockedTransformUuids.has(obj.uuid) }"
-            @click="toggleLockTransform(obj.uuid, obj.position)"
-            :title="state.lockedTransformUuids.has(obj.uuid) ? 'Transform locked in game loop. Click to release.' : 'Lock transform to prevent game loops / physics from overwriting it'"
-          >
-            <Lock v-if="state.lockedTransformUuids.has(obj.uuid)" :size="10" />
-            <Unlock v-else :size="10" />
-            <span>{{ state.lockedTransformUuids.has(obj.uuid) ? 'Locked in Loop' : 'Lock in Loop' }}</span>
-          </button>
+          <div class="title-actions">
+            <button
+              class="reset-btn"
+              @click="resetPropertyOverrides(obj.uuid)"
+              title="Reset all inspector overrides for this object and return control to the game loop"
+            >
+              <RotateCcw :size="10" />
+              <span>Reset</span>
+            </button>
+          </div>
         </div>
 
         <div class="fields-grid">
@@ -329,9 +330,19 @@ const activeMaterial = computed(() => {
 
       <!-- Light Card -->
       <div v-if="obj.light" class="section-card">
-        <div class="section-title">
-          <Sun :size="13" class="section-icon" />
-          Light Settings
+        <div class="section-title transform-title">
+          <div class="title-left">
+            <Sun :size="13" class="section-icon" />
+            Light Settings
+          </div>
+          <button
+            class="reset-btn"
+            @click="resetPropertyOverrides(obj.uuid)"
+            title="Reset light intensity to game loop control"
+          >
+            <RotateCcw :size="10" />
+            <span>Reset</span>
+          </button>
         </div>
         <div class="fields-grid">
           <div class="field-row">
@@ -351,15 +362,15 @@ const activeMaterial = computed(() => {
               <input
                 type="range"
                 min="0"
-                max="20"
-                step="0.1"
+                :max="Math.max(20, Math.ceil(obj.light.intensity * 2))"
+                step="0.05"
                 v-model.number="obj.light.intensity"
                 @input="update(['light', 'intensity'], obj.light.intensity)"
                 class="range-slider"
               />
               <input
                 type="number"
-                step="0.1"
+                step="0.05"
                 min="0"
                 v-model.number="obj.light.intensity"
                 @input="update(['light', 'intensity'], obj.light.intensity)"
@@ -650,6 +661,25 @@ const activeMaterial = computed(() => {
 
 .lock-btn:hover {
   color: var(--text-bright);
+}
+
+.reset-btn {
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.reset-btn:hover {
+  background: var(--bg-hover);
+  color: #38bdf8;
+  border-color: #38bdf8;
 }
 
 .lock-btn.active {
