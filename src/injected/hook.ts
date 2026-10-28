@@ -1,24 +1,10 @@
 import {
-  Raycaster,
   BoxHelper,
   Box3,
   Box3Helper,
-  Vector2,
   Vector3,
   Color,
-  MeshNormalMaterial,
-  MeshDepthMaterial,
-  MeshBasicMaterial,
-  BoxGeometry,
-  SphereGeometry,
-  PlaneGeometry,
-  CylinderGeometry,
-  MeshStandardMaterial,
-  Mesh,
-  DirectionalLight,
-  PointLight,
-  AmbientLight,
-  Group
+  MeshBasicMaterial
 } from 'three';
 import type {
   SerializedNode,
@@ -42,7 +28,7 @@ import {
   type InspectorMessage,
   type UpdatePropertyPayload
 } from '../types/messages';
-import { GizmoManager, type GizmoMode, type HelperOptions } from './gizmo';
+import { GizmoManager, type GizmoMode } from './gizmo';
 import { DebugCameraManager } from './debug-camera';
 import { ExporterManager } from './exporter';
 import { MemoryAuditor } from './memory-audit';
@@ -71,41 +57,42 @@ import { AnimationManager } from './animations';
   let currentHighlightTarget: any = null;
   let activeSelectedUuid: string | null = null;
   let lastActiveCamera: any = null;
-  let pickerEnabled = false;
-  let bypassPointerLock = false;
 
-  // Render overrides
-  let currentRenderOverride: 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit' = 'default';
-  const overrideNormals = new MeshNormalMaterial();
-  const overrideDepth = new MeshDepthMaterial();
-  const overrideUnlit = new MeshBasicMaterial({ color: 0xdddddd });
+  // Wireframe override state
+  let isWireframeActive = false;
+  const overrideWireframe = new MeshBasicMaterial({ wireframe: true, color: 0x38bdf8 });
 
   // Simulation Pause & Step
   let simulationPaused = false;
   let stepOneFrame = false;
 
-  // Helper options
-  const helperSettings: HelperOptions = {
-    grid: false,
-    axes: false,
-    lights: false,
-    cameras: false
-  };
-
   // Persistent property overrides (prevent game loops / animations from reverting user edits)
   const pinnedOverrides = new Map<string, Record<string, any>>();
 
+  gizmoManager.setOnDraggingChange((isDragging: boolean) => {
+    const orbit = debugCameraManager.getControls();
+    if (orbit) {
+      orbit.enabled = !isDragging;
+    }
+  });
+
   gizmoManager.setOnTransformChange((obj: any) => {
     if (!obj || !obj.uuid) return;
-    pinProperty(obj, 'position.x', obj.position.x);
-    pinProperty(obj, 'position.y', obj.position.y);
-    pinProperty(obj, 'position.z', obj.position.z);
-    pinProperty(obj, 'rotationDegrees.x', (obj.rotation.x * 180) / Math.PI);
-    pinProperty(obj, 'rotationDegrees.y', (obj.rotation.y * 180) / Math.PI);
-    pinProperty(obj, 'rotationDegrees.z', (obj.rotation.z * 180) / Math.PI);
-    pinProperty(obj, 'scale.x', obj.scale.x);
-    pinProperty(obj, 'scale.y', obj.scale.y);
-    pinProperty(obj, 'scale.z', obj.scale.z);
+    let overrides = pinnedOverrides.get(obj.uuid);
+    if (!overrides) {
+      overrides = {};
+      pinnedOverrides.set(obj.uuid, overrides);
+    }
+
+    overrides['position.x'] = obj.position.x;
+    overrides['position.y'] = obj.position.y;
+    overrides['position.z'] = obj.position.z;
+    overrides['rotationDegrees.x'] = (obj.rotation.x * 180) / Math.PI;
+    overrides['rotationDegrees.y'] = (obj.rotation.y * 180) / Math.PI;
+    overrides['rotationDegrees.z'] = (obj.rotation.z * 180) / Math.PI;
+    overrides['scale.x'] = obj.scale.x;
+    overrides['scale.y'] = obj.scale.y;
+    overrides['scale.z'] = obj.scale.z;
 
     emit('TRANSFORM_GIZMO_UPDATED', {
       uuid: obj.uuid,
@@ -146,60 +133,6 @@ import { AnimationManager } from './animations';
       } catch (e) {
         obj.intensity = currentVal;
       }
-    } else if (propPath === 'position.x' && obj.position) {
-      let currentVal = Number(value);
-      obj.position.__inspector_x = currentVal;
-      try {
-        Object.defineProperty(obj.position, 'x', {
-          get() {
-            return obj.position.__inspector_x !== undefined ? obj.position.__inspector_x : currentVal;
-          },
-          set(v) {
-            if (obj.position.__inspector_x !== undefined) return;
-            currentVal = v;
-          },
-          configurable: true,
-          enumerable: true
-        });
-      } catch (e) {
-        obj.position.x = currentVal;
-      }
-    } else if (propPath === 'position.y' && obj.position) {
-      let currentVal = Number(value);
-      obj.position.__inspector_y = currentVal;
-      try {
-        Object.defineProperty(obj.position, 'y', {
-          get() {
-            return obj.position.__inspector_y !== undefined ? obj.position.__inspector_y : currentVal;
-          },
-          set(v) {
-            if (obj.position.__inspector_y !== undefined) return;
-            currentVal = v;
-          },
-          configurable: true,
-          enumerable: true
-        });
-      } catch (e) {
-        obj.position.y = currentVal;
-      }
-    } else if (propPath === 'position.z' && obj.position) {
-      let currentVal = Number(value);
-      obj.position.__inspector_z = currentVal;
-      try {
-        Object.defineProperty(obj.position, 'z', {
-          get() {
-            return obj.position.__inspector_z !== undefined ? obj.position.__inspector_z : currentVal;
-          },
-          set(v) {
-            if (obj.position.__inspector_z !== undefined) return;
-            currentVal = v;
-          },
-          configurable: true,
-          enumerable: true
-        });
-      } catch (e) {
-        obj.position.z = currentVal;
-      }
     }
   }
 
@@ -211,20 +144,6 @@ import { AnimationManager } from './animations';
     if (obj.__inspector_intensity !== undefined) {
       delete obj.__inspector_intensity;
       delete obj.intensity;
-    }
-    if (obj.position) {
-      if (obj.position.__inspector_x !== undefined) {
-        delete obj.position.__inspector_x;
-        delete obj.position.x;
-      }
-      if (obj.position.__inspector_y !== undefined) {
-        delete obj.position.__inspector_y;
-        delete obj.position.y;
-      }
-      if (obj.position.__inspector_z !== undefined) {
-        delete obj.position.__inspector_z;
-        delete obj.position.z;
-      }
     }
   }
 
@@ -243,13 +162,14 @@ import { AnimationManager } from './animations';
     window.postMessage(message, '*');
   }
 
+  // Hook pointer lock to disable it when debug camera or gizmo is active
   function hookPointerLock() {
     const patchObj = (proto: any) => {
       if (!proto || !proto.requestPointerLock || proto.__INSPECTOR_PL_HOOKED__) return;
       proto.__INSPECTOR_PL_HOOKED__ = true;
       const orig = proto.requestPointerLock;
       proto.requestPointerLock = function () {
-        if (pickerEnabled || bypassPointerLock || gizmoManager.getMode() !== 'none') {
+        if (debugCameraManager.isEnabled() || gizmoManager.getMode() !== 'none') {
           if (document.pointerLockElement) {
             try {
               document.exitPointerLock();
@@ -389,24 +309,27 @@ import { AnimationManager } from './animations';
         stepOneFrame = false;
       }
 
-      const renderCam = debugCameraManager.getCamera(camera);
-      debugCameraManager.update();
+      // Check debug camera
+      const renderCam = debugCameraManager.isEnabled() ? debugCameraManager.getCamera(camera) : camera;
+      if (debugCameraManager.isEnabled()) {
+        debugCameraManager.update();
+      }
 
+      // Update gizmo camera
+      gizmoManager.updateCamera(renderCam);
+
+      // Apply pinned overrides before rendering
       applyPinnedOverrides();
 
+      // Enforce global wireframe override
       if (scene) {
-        if (currentRenderOverride === 'normals') {
-          scene.overrideMaterial = overrideNormals;
-        } else if (currentRenderOverride === 'depth') {
-          scene.overrideMaterial = overrideDepth;
-        } else if (currentRenderOverride === 'unlit') {
-          scene.overrideMaterial = overrideUnlit;
-        } else if (currentRenderOverride === 'default') {
+        if (isWireframeActive) {
+          scene.overrideMaterial = overrideWireframe;
+        } else if (scene.overrideMaterial === overrideWireframe) {
           scene.overrideMaterial = null;
         }
       }
 
-      gizmoManager.updateHelpersState();
       tickRender(this);
 
       return originalRender.call(this, scene, renderCam);
@@ -982,12 +905,17 @@ import { AnimationManager } from './animations';
   }
 
   function toggleWireframe(enabled: boolean) {
+    isWireframeActive = enabled;
     for (const scene of registeredScenes) {
+      scene.overrideMaterial = enabled ? overrideWireframe : null;
       scene.traverse((node: any) => {
         if (node.material) {
           const materials = Array.isArray(node.material) ? node.material : [node.material];
           materials.forEach((m: any) => {
-            m.wireframe = enabled;
+            if (node.__origWireframe === undefined) {
+              node.__origWireframe = Boolean(m.wireframe);
+            }
+            m.wireframe = enabled ? true : node.__origWireframe;
             m.needsUpdate = true;
           });
         }
@@ -1012,61 +940,6 @@ import { AnimationManager } from './animations';
       'color: inherit;',
       obj
     );
-  }
-
-  function spawnPrimitive(type: string) {
-    const scene = getActiveScene();
-    if (!scene) return;
-
-    let newObj: any = null;
-    const defaultMat = new MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.4, metalness: 0.1 });
-
-    switch (type) {
-      case 'box':
-        newObj = new Mesh(new BoxGeometry(1, 1, 1), defaultMat);
-        newObj.name = `Box (${Date.now().toString().slice(-4)})`;
-        break;
-      case 'sphere':
-        newObj = new Mesh(new SphereGeometry(0.7, 32, 16), defaultMat);
-        newObj.name = `Sphere (${Date.now().toString().slice(-4)})`;
-        break;
-      case 'plane':
-        newObj = new Mesh(new PlaneGeometry(2, 2), defaultMat);
-        newObj.name = `Plane (${Date.now().toString().slice(-4)})`;
-        break;
-      case 'cylinder':
-        newObj = new Mesh(new CylinderGeometry(0.5, 0.5, 1.5, 32), defaultMat);
-        newObj.name = `Cylinder (${Date.now().toString().slice(-4)})`;
-        break;
-      case 'directionalLight':
-        newObj = new DirectionalLight(0xffffff, 2);
-        newObj.position.set(5, 10, 7);
-        newObj.name = `DirectionalLight (${Date.now().toString().slice(-4)})`;
-        break;
-      case 'pointLight':
-        newObj = new PointLight(0xffea00, 3, 10);
-        newObj.position.set(0, 3, 0);
-        newObj.name = `PointLight (${Date.now().toString().slice(-4)})`;
-        break;
-      case 'ambientLight':
-        newObj = new AmbientLight(0xffffff, 0.5);
-        newObj.name = `AmbientLight (${Date.now().toString().slice(-4)})`;
-        break;
-      case 'group':
-        newObj = new Group();
-        newObj.name = `Group (${Date.now().toString().slice(-4)})`;
-        break;
-    }
-
-    if (newObj) {
-      scene.add(newObj);
-      indexSceneObjects(scene);
-      emitSceneGraph();
-      activeSelectedUuid = newObj.uuid;
-      setHighlight(newObj.uuid);
-      const details = extractObjectDetails(newObj);
-      if (details) emit('OBJECT_DETAILS_DATA', details);
-    }
   }
 
   function tickRender(renderer: any) {
@@ -1114,132 +987,6 @@ import { AnimationManager } from './animations';
     }
   }
 
-  function performRaycastAt(clientX: number, clientY: number): string | null {
-    const camera = getActiveCamera();
-    if (!camera) return null;
-
-    camera.updateMatrixWorld(true);
-
-    const canvas = getActiveCanvas();
-    const mouse = new Vector2();
-    if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    } else {
-      mouse.x = (clientX / window.innerWidth) * 2 - 1;
-      mouse.y = -(clientY / window.innerHeight) * 2 + 1;
-    }
-
-    try {
-      const raycaster = new Raycaster();
-      raycaster.setFromCamera(mouse, camera);
-
-      const targets: any[] = [];
-      for (const scene of registeredScenes) {
-        scene.traverse((obj: any) => {
-          if (
-            (obj.isMesh || obj.isInstancedMesh || obj.isLine || obj.isPoints) &&
-            obj.visible &&
-            (!obj.name || !obj.name.startsWith('__THREE_INSPECTOR_'))
-          ) {
-            targets.push(obj);
-          }
-        });
-      }
-
-      const intersects = raycaster.intersectObjects(targets, true);
-      if (intersects.length > 0) {
-        const hit = intersects[0].object;
-        activeSelectedUuid = hit.uuid;
-        setHighlight(hit.uuid);
-
-        if ((window as any).__THREE_INSPECTOR__) {
-          (window as any).__THREE_INSPECTOR__.lastPickedObject = hit.uuid;
-        }
-
-        emit('OBJECT_PICKED', { uuid: hit.uuid });
-
-        const details = extractObjectDetails(hit);
-        if (details) {
-          emit('OBJECT_DETAILS_DATA', details);
-        }
-        return hit.uuid;
-      }
-    } catch (err) {
-      console.error('[Three.js Inspector] Raycasting error:', err);
-    }
-    return null;
-  }
-
-  function onGlobalPickerMove(e: PointerEvent) {
-    if (!pickerEnabled) return;
-    performRaycastAt(e.clientX, e.clientY);
-  }
-
-  function onGlobalPickerPointerDown(e: any) {
-    if (!pickerEnabled) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-
-    if (document.pointerLockElement) {
-      try {
-        document.exitPointerLock();
-      } catch (err) {}
-    }
-
-    performRaycastAt(e.clientX, e.clientY);
-    setPickerMode(false);
-  }
-
-  function onGlobalPickerTrap(e: Event) {
-    if (pickerEnabled) {
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      if (document.pointerLockElement) {
-        try {
-          document.exitPointerLock();
-        } catch (err) {}
-      }
-    }
-  }
-
-  function setPickerMode(enabled: boolean) {
-    pickerEnabled = enabled;
-    const canvas = getActiveCanvas();
-
-    if (enabled) {
-      if (document.pointerLockElement) {
-        try {
-          document.exitPointerLock();
-        } catch (e) {}
-      }
-
-      document.body.style.cursor = 'crosshair';
-      if (canvas) canvas.style.cursor = 'crosshair';
-
-      window.addEventListener('pointerdown', onGlobalPickerPointerDown, true);
-      window.addEventListener('mousedown', onGlobalPickerPointerDown, true);
-      window.addEventListener('pointermove', onGlobalPickerMove, true);
-      window.addEventListener('click', onGlobalPickerTrap, true);
-      window.addEventListener('mouseup', onGlobalPickerTrap, true);
-      window.addEventListener('pointerup', onGlobalPickerTrap, true);
-    } else {
-      document.body.style.cursor = '';
-      if (canvas) canvas.style.cursor = '';
-
-      window.removeEventListener('pointerdown', onGlobalPickerPointerDown, true);
-      window.removeEventListener('mousedown', onGlobalPickerPointerDown, true);
-      window.removeEventListener('pointermove', onGlobalPickerMove, true);
-      window.removeEventListener('click', onGlobalPickerTrap, true);
-      window.removeEventListener('mouseup', onGlobalPickerTrap, true);
-      window.removeEventListener('pointerup', onGlobalPickerTrap, true);
-
-      setHighlight(activeSelectedUuid);
-    }
-  }
-
   function hookRendererPrototype() {
     const THREE = (window as any).THREE;
     if (THREE && THREE.WebGLRenderer && !THREE.WebGLRenderer.__INSPECTOR_HOOKED__) {
@@ -1258,24 +1005,22 @@ import { AnimationManager } from './animations';
           stepOneFrame = false;
         }
 
-        const renderCam = debugCameraManager.getCamera(camera);
-        debugCameraManager.update();
+        const renderCam = debugCameraManager.isEnabled() ? debugCameraManager.getCamera(camera) : camera;
+        if (debugCameraManager.isEnabled()) {
+          debugCameraManager.update();
+        }
 
+        gizmoManager.updateCamera(renderCam);
         applyPinnedOverrides();
 
         if (scene) {
-          if (currentRenderOverride === 'normals') {
-            scene.overrideMaterial = overrideNormals;
-          } else if (currentRenderOverride === 'depth') {
-            scene.overrideMaterial = overrideDepth;
-          } else if (currentRenderOverride === 'unlit') {
-            scene.overrideMaterial = overrideUnlit;
-          } else if (currentRenderOverride === 'default') {
+          if (isWireframeActive) {
+            scene.overrideMaterial = overrideWireframe;
+          } else if (scene.overrideMaterial === overrideWireframe) {
             scene.overrideMaterial = null;
           }
         }
 
-        gizmoManager.updateHelpersState();
         tickRender(this);
         return originalRender.call(this, scene, renderCam);
       };
@@ -1344,14 +1089,6 @@ import { AnimationManager } from './animations';
         if (typeof payload?.enabled === 'boolean') toggleWireframe(payload.enabled);
         break;
 
-      case 'SET_RENDER_OVERRIDE':
-        if (payload?.mode) currentRenderOverride = payload.mode;
-        break;
-
-      case 'TOGGLE_PICKER':
-        if (typeof payload?.enabled === 'boolean') setPickerMode(payload.enabled);
-        break;
-
       case 'SET_GIZMO_MODE':
         if (payload?.mode) gizmoManager.setMode(payload.mode);
         break;
@@ -1364,18 +1101,6 @@ import { AnimationManager } from './animations';
         }
         break;
 
-      case 'TOGGLE_DEBUG_CAMERA': {
-        const canvas = getActiveCanvas();
-        if (canvas) {
-          if (debugCameraManager.isEnabled()) {
-            debugCameraManager.disable();
-          } else {
-            debugCameraManager.enable(canvas, lastActiveCamera);
-          }
-        }
-        break;
-      }
-
       case 'TOGGLE_PAUSE_SCENE':
         simulationPaused = Boolean(payload?.enabled);
         break;
@@ -1383,22 +1108,6 @@ import { AnimationManager } from './animations';
       case 'STEP_SIMULATION_FRAME':
         stepOneFrame = true;
         break;
-
-      case 'SPAWN_PRIMITIVE':
-        if (payload?.type) spawnPrimitive(payload.type);
-        break;
-
-      case 'EXPORT_GLTF': {
-        const target = payload?.uuid ? findObjectByUuid(payload.uuid) : getActiveScene();
-        if (target) ExporterManager.exportToGLTF(target, `${target.name || 'threejs-scene'}.glb`);
-        break;
-      }
-
-      case 'CAPTURE_SCREENSHOT': {
-        const canvas = getActiveCanvas();
-        if (canvas) ExporterManager.captureCanvasScreenshot(canvas);
-        break;
-      }
 
       case 'CONTROL_ANIMATION':
         if (payload) {
@@ -1422,17 +1131,6 @@ import { AnimationManager } from './animations';
             }
           }
           emit('MEMORY_AUDIT_DATA', MemoryAuditor.audit(registeredScenes, allKnownGeometries, allKnownTextures));
-        }
-        break;
-
-      case 'TOGGLE_POINTER_LOCK_BYPASS':
-        if (typeof payload?.enabled === 'boolean') {
-          bypassPointerLock = payload.enabled;
-          if (bypassPointerLock && document.pointerLockElement) {
-            try {
-              document.exitPointerLock();
-            } catch (e) {}
-          }
         }
         break;
     }
@@ -1489,7 +1187,7 @@ import { AnimationManager } from './animations';
           },
           unpinObjectProperties,
           toggleWireframe,
-          setPickerMode,
+          isWireframeActive: () => isWireframeActive,
           setGizmoMode: (mode: GizmoMode) => gizmoManager.setMode(mode),
           getGizmoMode: () => gizmoManager.getMode(),
           focusObject: (uuid: string) => {
@@ -1509,30 +1207,12 @@ import { AnimationManager } from './animations';
             return debugCameraManager.isEnabled();
           },
           isDebugCameraActive: () => debugCameraManager.isEnabled(),
-          setHelpers: (opts: Partial<HelperOptions>) => {
-            Object.assign(helperSettings, opts);
-            const scene = getActiveScene();
-            if (scene) gizmoManager.updateHelpers(scene, helperSettings);
-          },
-          getHelpers: () => helperSettings,
-          setRenderOverride: (mode: 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit') => {
-            currentRenderOverride = mode;
-          },
-          getRenderOverride: () => currentRenderOverride,
           togglePauseSimulation: (enable?: boolean) => {
             simulationPaused = enable !== undefined ? enable : !simulationPaused;
             return simulationPaused;
           },
           stepSimulationFrame: () => {
             stepOneFrame = true;
-          },
-          exportGLTF: (uuid?: string) => {
-            const target = uuid ? findObjectByUuid(uuid) : getActiveScene();
-            if (target) ExporterManager.exportToGLTF(target, `${target.name || 'scene'}.glb`);
-          },
-          captureScreenshot: () => {
-            const canvas = getActiveCanvas();
-            if (canvas) ExporterManager.captureCanvasScreenshot(canvas);
           },
           downloadTexture: (uuid: string) => {
             const tex = allKnownTextures.get(uuid);
@@ -1561,15 +1241,6 @@ import { AnimationManager } from './animations';
           controlAnimation: (mixerId: string, clipName: string, action: any, value?: number) => {
             animationManager.control(mixerId, clipName, action, value);
           },
-          spawnPrimitive,
-          setPointerLockBypass: (enabled: boolean) => {
-            bypassPointerLock = enabled;
-            if (enabled && document.pointerLockElement) {
-              try {
-                document.exitPointerLock();
-              } catch (e) {}
-            }
-          },
           selectObject: (uuid: string) => {
             activeSelectedUuid = uuid;
             const obj = findObjectByUuid(uuid);
@@ -1585,8 +1256,7 @@ import { AnimationManager } from './animations';
           refresh: () => {
             emitDetection();
             emitSceneGraph();
-          },
-          lastPickedObject: null as string | null
+          }
         };
       } catch {}
     } catch (e) {}

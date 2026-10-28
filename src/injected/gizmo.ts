@@ -1,41 +1,19 @@
 import {
   Box3,
   Vector3,
-  GridHelper,
-  AxesHelper,
-  DirectionalLightHelper,
-  PointLightHelper,
-  SpotLightHelper,
-  CameraHelper,
   Group
 } from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale' | 'none';
 
-export interface HelperOptions {
-  grid: boolean;
-  axes: boolean;
-  lights: boolean;
-  cameras: boolean;
-}
-
 export class GizmoManager {
   private transformControls: TransformControls | null = null;
   private currentMode: GizmoMode = 'none';
   private targetObject: any = null;
   private helperRoot = new Group();
-  private gridHelper: GridHelper | null = null;
-  private axesHelper: AxesHelper | null = null;
-  private activeHelpers: any[] = [];
-  private helperOptions: HelperOptions = {
-    grid: false,
-    axes: false,
-    lights: false,
-    cameras: false
-  };
-
   private onTransformChange?: (obj: any) => void;
+  private onDraggingChange?: (isDragging: boolean) => void;
 
   constructor() {
     this.helperRoot.name = '__THREE_INSPECTOR_HELPERS__';
@@ -43,6 +21,10 @@ export class GizmoManager {
 
   public setOnTransformChange(callback: (obj: any) => void) {
     this.onTransformChange = callback;
+  }
+
+  public setOnDraggingChange(callback: (isDragging: boolean) => void) {
+    this.onDraggingChange = callback;
   }
 
   public initControls(camera: any, domElement: HTMLElement, scene: any) {
@@ -67,6 +49,12 @@ export class GizmoManager {
           }
         });
 
+        this.transformControls.addEventListener('dragging-changed', (event: any) => {
+          if (this.onDraggingChange) {
+            this.onDraggingChange(Boolean(event.value));
+          }
+        });
+
         const helper = this.transformControls.getHelper();
         helper.name = '__THREE_INSPECTOR_GIZMO__';
         this.helperRoot.add(helper);
@@ -83,6 +71,7 @@ export class GizmoManager {
     this.initControls(camera, domElement, scene);
 
     if (this.transformControls) {
+      this.transformControls.camera = camera;
       if (object && this.currentMode !== 'none') {
         this.transformControls.attach(object);
       } else {
@@ -116,89 +105,9 @@ export class GizmoManager {
     return this.currentMode;
   }
 
-  public updateHelpers(scene: any, options: Partial<HelperOptions>) {
-    Object.assign(this.helperOptions, options);
-    if (!scene) return;
-
-    if (!this.helperRoot.parent) {
-      scene.add(this.helperRoot);
-    }
-
-    // Grid
-    if (this.helperOptions.grid) {
-      if (!this.gridHelper) {
-        this.gridHelper = new GridHelper(20, 20, 0x38bdf8, 0x475569);
-        this.gridHelper.name = '__THREE_INSPECTOR_GRID__';
-        this.helperRoot.add(this.gridHelper);
-      }
-    } else if (this.gridHelper) {
-      this.helperRoot.remove(this.gridHelper);
-      this.gridHelper.dispose();
-      this.gridHelper = null;
-    }
-
-    // Axes
-    if (this.helperOptions.axes) {
-      if (!this.axesHelper) {
-        this.axesHelper = new AxesHelper(5);
-        this.axesHelper.name = '__THREE_INSPECTOR_AXES__';
-        this.axesHelper.renderOrder = 9999;
-        this.helperRoot.add(this.axesHelper);
-      }
-    } else if (this.axesHelper) {
-      this.helperRoot.remove(this.axesHelper);
-      this.axesHelper.dispose();
-      this.axesHelper = null;
-    }
-
-    // Dynamic light & camera helpers
-    for (const helper of this.activeHelpers) {
-      this.helperRoot.remove(helper);
-      if (typeof helper.dispose === 'function') helper.dispose();
-    }
-    this.activeHelpers = [];
-
-    if (this.helperOptions.lights || this.helperOptions.cameras) {
-      scene.traverse((obj: any) => {
-        if (!obj || obj === this.helperRoot || obj.parent === this.helperRoot) return;
-
-        if (this.helperOptions.lights && obj.isLight) {
-          try {
-            let helper: any = null;
-            if (obj.isDirectionalLight) {
-              helper = new DirectionalLightHelper(obj, 1, 0xffea00);
-            } else if (obj.isPointLight) {
-              helper = new PointLightHelper(obj, 0.5, 0xffea00);
-            } else if (obj.isSpotLight) {
-              helper = new SpotLightHelper(obj, 0xffea00);
-            }
-            if (helper) {
-              helper.name = '__THREE_INSPECTOR_LIGHT_HELPER__';
-              this.helperRoot.add(helper);
-              this.activeHelpers.push(helper);
-            }
-          } catch (e) {}
-        }
-
-        if (this.helperOptions.cameras && obj.isCamera && !obj.__isInspectorCamera) {
-          try {
-            const helper = new CameraHelper(obj);
-            helper.name = '__THREE_INSPECTOR_CAMERA_HELPER__';
-            this.helperRoot.add(helper);
-            this.activeHelpers.push(helper);
-          } catch (e) {}
-        }
-      });
-    }
-  }
-
-  public updateHelpersState() {
-    for (const helper of this.activeHelpers) {
-      if (typeof helper.update === 'function') {
-        try {
-          helper.update();
-        } catch (e) {}
-      }
+  public updateCamera(camera: any) {
+    if (this.transformControls && camera) {
+      this.transformControls.camera = camera;
     }
   }
 
@@ -217,7 +126,7 @@ export class GizmoManager {
       const maxDim = Math.max(size.x, size.y, size.z) || 1;
 
       const fov = camera.fov ? (camera.fov * Math.PI) / 180 : 0.8;
-      const distance = Math.abs(maxDim / Math.sin(fov / 2)) * 1.2;
+      const distance = Math.abs(maxDim / Math.sin(fov / 2)) * 1.3;
 
       const direction = new Vector3()
         .subVectors(camera.position, center)

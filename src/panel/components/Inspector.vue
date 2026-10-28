@@ -7,7 +7,6 @@ import {
   resetPropertyOverrides,
   setGizmoMode,
   focusObject,
-  exportGLTF,
   copyThreeCode,
   downloadTexture
 } from '../bridge';
@@ -96,12 +95,6 @@ function applyShaders() {
               <Check v-if="copiedCode" :size="12" style="color: #4ade80" />
               <Copy v-else :size="12" />
               <span>{{ copiedCode ? 'Copied!' : 'Code' }}</span>
-            </button>
-
-            <!-- Export Object to GLB -->
-            <button class="tool-btn" @click="exportGLTF(obj.uuid)" title="Export Object as GLB">
-              <Download :size="12" />
-              <span>GLB</span>
             </button>
 
             <!-- Console $three -->

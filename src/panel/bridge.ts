@@ -24,18 +24,9 @@ export const state = reactive({
   selectedObject: null as ObjectDetails | null,
   stats: null as RendererStats | null,
   wireframeActive: false,
-  pickerActive: false,
-  pointerLockBypassed: false,
   scenePaused: false,
   debugCameraActive: false,
   gizmoMode: 'none' as 'translate' | 'rotate' | 'scale' | 'none',
-  renderOverride: 'default' as 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit',
-  helpers: {
-    grid: false,
-    axes: false,
-    lights: false,
-    cameras: false
-  },
   memoryAudit: null as MemoryAuditData | null,
   animations: [] as AnimationMixerInfo[],
   sessionEdits: [] as SessionEditRecord[],
@@ -46,9 +37,7 @@ export const state = reactive({
 
 let port: chrome.runtime.Port | null = null;
 const tabId = chrome.devtools?.inspectedWindow?.tabId || 0;
-let pickerPollTimer: any = null;
 
-// Direct execution in the inspected page's main world
 export function executeInPage(code: string, callback?: (result: any, isException: any) => void) {
   if (chrome.devtools?.inspectedWindow?.eval) {
     chrome.devtools.inspectedWindow.eval(code, (result, isException) => {
@@ -110,14 +99,6 @@ function handleMessage(message: InspectorMessage) {
     case 'CATEGORIZED_DATA':
       if (message.payload) {
         state.categories = message.payload;
-      }
-      break;
-
-    case 'OBJECT_PICKED':
-      if (message.payload?.uuid) {
-        state.selectedUuid = message.payload.uuid;
-        state.pickerActive = false;
-        selectObject(message.payload.uuid);
       }
       break;
 
@@ -272,28 +253,17 @@ export function toggleDebugCamera() {
   executeInPage(script, (active) => {
     state.debugCameraActive = Boolean(active);
   });
-  send('TOGGLE_DEBUG_CAMERA');
 }
 
-export function toggleHelper(helperType: 'grid' | 'axes' | 'lights' | 'cameras') {
-  state.helpers[helperType] = !state.helpers[helperType];
+export function toggleWireframe() {
+  state.wireframeActive = !state.wireframeActive;
   const script = `
     if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.setHelpers(${JSON.stringify(state.helpers)});
+      window.__THREE_INSPECTOR__.toggleWireframe(${state.wireframeActive});
     }
   `;
   executeInPage(script);
-}
-
-export function setRenderOverride(mode: 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit') {
-  state.renderOverride = mode;
-  const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.setRenderOverride(${JSON.stringify(mode)});
-    }
-  `;
-  executeInPage(script);
-  send('SET_RENDER_OVERRIDE', { mode });
+  send('TOGGLE_WIREFRAME', { enabled: state.wireframeActive });
 }
 
 export function togglePauseSimulation() {
@@ -315,37 +285,6 @@ export function stepSimulationFrame() {
   `;
   executeInPage(script);
   send('STEP_SIMULATION_FRAME');
-}
-
-export function spawnPrimitive(type: 'box' | 'sphere' | 'plane' | 'cylinder' | 'directionalLight' | 'pointLight' | 'ambientLight' | 'group') {
-  const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.spawnPrimitive(${JSON.stringify(type)});
-    }
-  `;
-  executeInPage(script);
-  send('SPAWN_PRIMITIVE', { type });
-}
-
-export function exportGLTF(uuid?: string) {
-  const targetUuid = uuid || state.selectedUuid;
-  const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.exportGLTF(${JSON.stringify(targetUuid || null)});
-    }
-  `;
-  executeInPage(script);
-  send('EXPORT_GLTF', { uuid: targetUuid });
-}
-
-export function captureScreenshot() {
-  const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.captureScreenshot();
-    }
-  `;
-  executeInPage(script);
-  send('CAPTURE_SCREENSHOT');
 }
 
 export function downloadTexture(uuid: string) {
@@ -466,69 +405,6 @@ export function inspectInConsole(uuid: string) {
   `;
   executeInPage(script);
   send('INSPECT_IN_CONSOLE', { uuid });
-}
-
-export function toggleWireframe() {
-  state.wireframeActive = !state.wireframeActive;
-  const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.toggleWireframe(${state.wireframeActive});
-    }
-  `;
-  executeInPage(script);
-  send('TOGGLE_WIREFRAME', { enabled: state.wireframeActive });
-}
-
-export function togglePicker() {
-  state.pickerActive = !state.pickerActive;
-
-  const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.setPickerMode(${state.pickerActive});
-    }
-  `;
-  executeInPage(script);
-  send('TOGGLE_PICKER', { enabled: state.pickerActive });
-
-  if (state.pickerActive) {
-    if (pickerPollTimer) clearInterval(pickerPollTimer);
-    pickerPollTimer = setInterval(() => {
-      if (!state.pickerActive) {
-        clearInterval(pickerPollTimer);
-        return;
-      }
-      const pollScript = `
-        (function() {
-          if (window.__THREE_INSPECTOR__ && window.__THREE_INSPECTOR__.lastPickedObject) {
-            var uuid = window.__THREE_INSPECTOR__.lastPickedObject;
-            window.__THREE_INSPECTOR__.lastPickedObject = null;
-            return uuid;
-          }
-          return null;
-        })()
-      `;
-      executeInPage(pollScript, (pickedUuid) => {
-        if (pickedUuid) {
-          state.pickerActive = false;
-          clearInterval(pickerPollTimer);
-          selectObject(pickedUuid);
-        }
-      });
-    }, 120);
-  } else {
-    if (pickerPollTimer) clearInterval(pickerPollTimer);
-  }
-}
-
-export function togglePointerLockBypass() {
-  state.pointerLockBypassed = !state.pointerLockBypassed;
-  const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.setPointerLockBypass(${state.pointerLockBypassed});
-    }
-  `;
-  executeInPage(script);
-  send('TOGGLE_POINTER_LOCK_BYPASS', { enabled: state.pointerLockBypassed });
 }
 
 export function resetPropertyOverrides(uuid: string) {

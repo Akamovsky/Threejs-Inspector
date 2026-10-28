@@ -5,16 +5,28 @@ export class DebugCameraManager {
   private debugCamera: PerspectiveCamera | null = null;
   private controls: OrbitControls | null = null;
   private isActive = false;
-  private savedCamera: any = null;
+  private canvas: HTMLCanvasElement | null = null;
+  private onContextMenuBound: ((e: MouseEvent) => void) | null = null;
 
   public isEnabled(): boolean {
     return this.isActive;
   }
 
-  public enable(domElement: HTMLElement, currentCamera: any) {
+  public getControls(): OrbitControls | null {
+    return this.controls;
+  }
+
+  public enable(domElement: HTMLCanvasElement, currentCamera: any) {
     if (this.isActive) return;
 
-    this.savedCamera = currentCamera;
+    this.canvas = domElement;
+
+    // Release any existing pointer lock
+    if (typeof document !== 'undefined' && document.pointerLockElement) {
+      try {
+        document.exitPointerLock();
+      } catch (e) {}
+    }
 
     const width = domElement.clientWidth || window.innerWidth || 800;
     const height = domElement.clientHeight || window.innerHeight || 600;
@@ -37,18 +49,38 @@ export class DebugCameraManager {
       this.debugCamera.position.set(0, 5, 10);
       this.debugCamera.lookAt(0, 0, 0);
     }
+    this.debugCamera.updateMatrixWorld(true);
     this.debugCamera.updateProjectionMatrix();
 
     try {
       this.controls = new OrbitControls(this.debugCamera, domElement);
       this.controls.enableDamping = true;
-      this.controls.dampingFactor = 0.08;
+      this.controls.dampingFactor = 0.05;
+      this.controls.screenSpacePanning = true;
 
-      // Set target in front of camera
+      // Blender-style controls:
+      // Left click (0) = Orbit / Rotate
+      // Scroll wheel = Zoom / Dolly (handled by wheel event)
+      // Right click (2) = Pan / Move
+      this.controls.mouseButtons = {
+        LEFT: 0,
+        MIDDLE: 0,
+        RIGHT: 2
+      };
+
+      // Set orbit target in front of camera
       const dir = new Vector3();
       this.debugCamera.getWorldDirection(dir);
-      this.controls.target.copy(this.debugCamera.position).addScaledVector(dir, 5);
+      this.controls.target.copy(this.debugCamera.position).addScaledVector(dir, 8);
       this.controls.update();
+
+      // Prevent browser context menu on right-click pan
+      this.onContextMenuBound = (e: MouseEvent) => {
+        if (this.isActive) {
+          e.preventDefault();
+        }
+      };
+      domElement.addEventListener('contextmenu', this.onContextMenuBound);
     } catch (e) {
       console.warn('[Three.js Inspector] Failed to init OrbitControls on debug camera:', e);
     }
@@ -59,11 +91,18 @@ export class DebugCameraManager {
   public disable() {
     if (!this.isActive) return;
 
+    if (this.canvas && this.onContextMenuBound) {
+      this.canvas.removeEventListener('contextmenu', this.onContextMenuBound);
+      this.onContextMenuBound = null;
+    }
+
     if (this.controls) {
       this.controls.dispose();
       this.controls = null;
     }
+
     this.debugCamera = null;
+    this.canvas = null;
     this.isActive = false;
   }
 
@@ -73,7 +112,7 @@ export class DebugCameraManager {
     }
   }
 
-  public getCamera(fallback: any): any {
+  public getCamera(fallback?: any): any {
     return this.isActive && this.debugCamera ? this.debugCamera : fallback;
   }
 }

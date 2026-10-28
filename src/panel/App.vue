@@ -2,17 +2,11 @@
 import { ref } from 'vue';
 import {
   state,
-  togglePicker,
-  togglePointerLockBypass,
   setGizmoMode,
   toggleDebugCamera,
-  toggleHelper,
-  setRenderOverride,
+  toggleWireframe,
   togglePauseSimulation,
   stepSimulationFrame,
-  spawnPrimitive,
-  exportGLTF,
-  captureScreenshot,
   refresh
 } from './bridge';
 import TreeView from './components/TreeView.vue';
@@ -27,11 +21,8 @@ import {
   Activity,
   Sliders,
   Box,
-  MousePointer,
   FolderTree,
   Layers,
-  Lock,
-  Unlock,
   Camera,
   Move,
   RotateCw,
@@ -39,30 +30,18 @@ import {
   Pause,
   Play,
   SkipForward,
-  Camera as ScreenshotIcon,
-  Plus,
-  Download,
   Film,
-  History,
-  Eye
+  History
 } from 'lucide-vue-next';
 
 const explorerView = ref<'hierarchy' | 'categories'>('hierarchy');
 const activeTab = ref<'inspector' | 'stats' | 'animations' | 'edits'>('inspector');
-
-const showAddMenu = ref(false);
-const showHelpersMenu = ref(false);
-
-function handleSpawn(type: any) {
-  spawnPrimitive(type);
-  showAddMenu.value = false;
-}
 </script>
 
 <template>
-  <div class="panel-root" @click="showAddMenu = false; showHelpersMenu = false">
+  <div class="panel-root">
     <!-- Top Bar -->
-    <header class="panel-header" @click.stop>
+    <header class="panel-header">
       <div class="header-left">
         <div class="header-brand">
           <Box :size="15" class="brand-icon" />
@@ -79,17 +58,6 @@ function handleSpawn(type: any) {
       </div>
 
       <div class="header-actions">
-        <!-- 3D Raycaster Inspect Element Picker -->
-        <button
-          class="action-btn picker-btn"
-          :class="{ active: state.pickerActive }"
-          @click="togglePicker"
-          title="Click to inspect: Click any 3D object directly on the canvas"
-        >
-          <MousePointer :size="12" />
-          <span>{{ state.pickerActive ? 'Picking...' : 'Pick in 3D' }}</span>
-        </button>
-
         <!-- 3D Transform Gizmo Buttons -->
         <div class="btn-group">
           <button
@@ -118,60 +86,27 @@ function handleSpawn(type: any) {
           </button>
         </div>
 
-        <!-- Free-fly / Debug Camera Toggle -->
+        <!-- Free-fly / Debug Camera Toggle (Blender-style OrbitControls) -->
         <button
           class="action-btn"
           :class="{ active: state.debugCameraActive }"
           @click="toggleDebugCamera"
-          title="Toggle Free-fly / Orbit Debug Camera"
+          title="Free/Roaming Debug Camera (Left-click: Orbit, Scroll: Zoom, Right-click: Pan)"
         >
           <Camera :size="12" />
-          <span>{{ state.debugCameraActive ? 'Debug Cam On' : 'Debug Cam' }}</span>
+          <span>{{ state.debugCameraActive ? 'Debug Cam (Active)' : 'Debug Camera' }}</span>
         </button>
 
-        <!-- Render Mode Override Dropdown -->
-        <select
-          class="mode-select"
-          :value="state.renderOverride"
-          @change="setRenderOverride(($event.target as HTMLSelectElement).value as any)"
-          title="Render Mode Override"
+        <!-- Global Wireframe Toggle -->
+        <button
+          class="action-btn"
+          :class="{ active: state.wireframeActive }"
+          @click="toggleWireframe"
+          title="Toggle Global Wireframe"
         >
-          <option value="default">Render: Default</option>
-          <option value="wireframe">Render: Wireframe</option>
-          <option value="normals">Render: Normals</option>
-          <option value="depth">Render: Depth Buffer</option>
-          <option value="unlit">Render: Unlit</option>
-        </select>
-
-        <!-- Scene Helpers Dropdown -->
-        <div class="dropdown-wrapper">
-          <button
-            class="action-btn"
-            @click.stop="showHelpersMenu = !showHelpersMenu; showAddMenu = false"
-            title="Toggle Scene Visual Helpers"
-          >
-            <Eye :size="12" />
-            <span>Helpers</span>
-          </button>
-          <div v-if="showHelpersMenu" class="dropdown-menu helpers-menu" @click.stop>
-            <label class="menu-check-item">
-              <input type="checkbox" :checked="state.helpers.grid" @change="toggleHelper('grid')" />
-              Grid Helper
-            </label>
-            <label class="menu-check-item">
-              <input type="checkbox" :checked="state.helpers.axes" @change="toggleHelper('axes')" />
-              Axes Helper
-            </label>
-            <label class="menu-check-item">
-              <input type="checkbox" :checked="state.helpers.lights" @change="toggleHelper('lights')" />
-              Light Helpers
-            </label>
-            <label class="menu-check-item">
-              <input type="checkbox" :checked="state.helpers.cameras" @change="toggleHelper('cameras')" />
-              Camera Helpers
-            </label>
-          </div>
-        </div>
+          <Grid :size="12" />
+          <span>Wireframe</span>
+        </button>
 
         <!-- Simulation Controls: Pause & Step Frame -->
         <div class="btn-group">
@@ -193,61 +128,6 @@ function handleSpawn(type: any) {
             <SkipForward :size="12" />
           </button>
         </div>
-
-        <!-- Canvas Screenshot -->
-        <button
-          class="action-btn icon-only"
-          @click="captureScreenshot"
-          title="Capture High-Res Screenshot of 3D Canvas"
-        >
-          <ScreenshotIcon :size="12" />
-        </button>
-
-        <!-- "+ Add Object" Menu -->
-        <div class="dropdown-wrapper">
-          <button
-            class="action-btn add-btn"
-            @click.stop="showAddMenu = !showAddMenu; showHelpersMenu = false"
-            title="Add Primitive or Light into Scene"
-          >
-            <Plus :size="12" />
-            <span>Add</span>
-          </button>
-          <div v-if="showAddMenu" class="dropdown-menu add-menu" @click.stop>
-            <span class="menu-group-label">Meshes</span>
-            <button class="menu-item" @click="handleSpawn('box')">Box</button>
-            <button class="menu-item" @click="handleSpawn('sphere')">Sphere</button>
-            <button class="menu-item" @click="handleSpawn('plane')">Plane</button>
-            <button class="menu-item" @click="handleSpawn('cylinder')">Cylinder</button>
-            <span class="menu-group-label">Lights</span>
-            <button class="menu-item" @click="handleSpawn('directionalLight')">Directional Light</button>
-            <button class="menu-item" @click="handleSpawn('pointLight')">Point Light</button>
-            <button class="menu-item" @click="handleSpawn('ambientLight')">Ambient Light</button>
-            <span class="menu-group-label">Other</span>
-            <button class="menu-item" @click="handleSpawn('group')">Group</button>
-          </div>
-        </div>
-
-        <!-- Export Whole Scene as GLB -->
-        <button
-          class="action-btn"
-          @click="exportGLTF()"
-          title="Export Active Scene as .GLB File"
-        >
-          <Download :size="12" />
-          <span>Export GLB</span>
-        </button>
-
-        <!-- Pointer Lock Bypass Toggle -->
-        <button
-          class="action-btn"
-          :class="{ active: state.pointerLockBypassed }"
-          @click="togglePointerLockBypass"
-          :title="state.pointerLockBypassed ? 'Pointer Lock Bypassed' : 'Bypass Pointer Lock'"
-        >
-          <Unlock v-if="state.pointerLockBypassed" :size="12" />
-          <Lock v-else :size="12" />
-        </button>
 
         <!-- Refresh -->
         <button class="action-btn icon-only" @click="refresh" title="Reload Scene">
@@ -427,7 +307,7 @@ function handleSpawn(type: any) {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -435,7 +315,7 @@ function handleSpawn(type: any) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 7px;
+  padding: 2px 8px;
   height: 24px;
   font-size: 11px;
   border-radius: 3px;
@@ -458,14 +338,7 @@ function handleSpawn(type: any) {
 }
 
 .action-btn.icon-only {
-  padding: 0 6px;
-}
-
-.picker-btn.active {
-  background: #0284c7;
-  color: #ffffff;
-  border-color: #38bdf8;
-  box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+  padding: 0 7px;
 }
 
 .btn-group {
@@ -484,81 +357,6 @@ function handleSpawn(type: any) {
 
 .btn-group .action-btn:last-child {
   border-right: none;
-}
-
-.mode-select {
-  height: 24px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  color: var(--text-muted);
-  border-radius: 3px;
-  padding: 0 4px;
-  font-size: 10.5px;
-  outline: none;
-  cursor: pointer;
-}
-
-.mode-select:hover {
-  color: var(--text-bright);
-}
-
-.dropdown-wrapper {
-  position: relative;
-}
-
-.dropdown-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  padding: 6px;
-  z-index: 1000;
-  min-width: 130px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.menu-group-label {
-  font-size: 9px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  font-weight: bold;
-  padding: 2px 4px;
-}
-
-.menu-item {
-  background: transparent;
-  border: none;
-  border-radius: 3px;
-  padding: 3px 6px;
-  color: var(--text-primary);
-  font-size: 10.5px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.menu-item:hover {
-  background: var(--bg-hover);
-  color: #38bdf8;
-}
-
-.menu-check-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  padding: 3px 6px;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.menu-check-item:hover {
-  background: var(--bg-hover);
 }
 
 .panel-workspace {
