@@ -183,6 +183,10 @@ export function logSessionEdit(uuid: string, objectName: string, path: string, v
 export function selectObject(uuid: string) {
   state.selectedUuid = uuid;
 
+  if (state.gizmoMode === 'none') {
+    state.gizmoMode = 'translate';
+  }
+
   const script = `
     (function() {
       if (window.__THREE_INSPECTOR__) {

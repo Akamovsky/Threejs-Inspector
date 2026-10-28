@@ -62,21 +62,14 @@ import { AnimationManager } from './animations';
   let isWireframeActive = false;
   const overrideWireframe = new MeshBasicMaterial({ wireframe: true, color: 0x38bdf8 });
 
-  // Simulation Pause & Step
-  let simulationPaused = false;
-  let stepOneFrame = false;
-
-  // Persistent property overrides (prevent game loops / animations from reverting user edits)
+  // Persistent property overrides (e.g. for light intensity)
   const pinnedOverrides = new Map<string, Record<string, any>>();
 
   // Escape key reverts camera focus
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && gizmoManager.isFocused()) {
-      const cam = getActiveCamera();
-      if (cam) {
-        gizmoManager.revertFocus(cam);
-        emit('FOCUS_STATE_CHANGED', { isFocused: false });
-      }
+    if (e.key === 'Escape' && debugCameraManager.isFocusActive()) {
+      debugCameraManager.revertFocus();
+      emit('FOCUS_STATE_CHANGED', { isFocused: false });
     }
   });
 
@@ -92,28 +85,6 @@ import { AnimationManager } from './animations';
   gizmoManager.setOnTransformChange((obj: any) => {
     if (!obj || !obj.uuid) return;
     try {
-      let overrides = pinnedOverrides.get(obj.uuid);
-      if (!overrides) {
-        overrides = {};
-        pinnedOverrides.set(obj.uuid, overrides);
-      }
-
-      if (obj.position) {
-        overrides['position.x'] = obj.position.x;
-        overrides['position.y'] = obj.position.y;
-        overrides['position.z'] = obj.position.z;
-      }
-      if (obj.rotation) {
-        overrides['rotationDegrees.x'] = (obj.rotation.x * 180) / Math.PI;
-        overrides['rotationDegrees.y'] = (obj.rotation.y * 180) / Math.PI;
-        overrides['rotationDegrees.z'] = (obj.rotation.z * 180) / Math.PI;
-      }
-      if (obj.scale) {
-        overrides['scale.x'] = obj.scale.x;
-        overrides['scale.y'] = obj.scale.y;
-        overrides['scale.z'] = obj.scale.z;
-      }
-
       emit('TRANSFORM_GIZMO_UPDATED', {
         uuid: obj.uuid,
         position: obj.position ? { x: +obj.position.x.toFixed(3), y: +obj.position.y.toFixed(3), z: +obj.position.z.toFixed(3) } : { x: 0, y: 0, z: 0 },
@@ -195,7 +166,7 @@ import { AnimationManager } from './animations';
       proto.__INSPECTOR_PL_HOOKED__ = true;
       const orig = proto.requestPointerLock;
       proto.requestPointerLock = function () {
-        if (debugCameraManager.isEnabled() || gizmoManager.getMode() !== 'none') {
+        if (debugCameraManager.isEnabled() || gizmoManager.isDragging()) {
           if (document.pointerLockElement) {
             try {
               document.exitPointerLock();
@@ -250,20 +221,21 @@ import { AnimationManager } from './animations';
   }
 
   function getActiveCamera(): any {
-    const fallback = (() => {
-      if (lastActiveCamera) return lastActiveCamera;
-      for (const scene of registeredScenes) {
-        let cam: any = null;
-        try {
-          scene.traverse((o: any) => {
-            if (o && o.isCamera && !o.__isInspectorCamera && !cam) cam = o;
-          });
-        } catch (e) {}
-        if (cam) return cam;
-      }
-      return null;
-    })();
-    return debugCameraManager.getCamera(fallback);
+    if (debugCameraManager.isEnabled()) {
+      return debugCameraManager.getCamera(lastActiveCamera);
+    }
+    if (lastActiveCamera) return lastActiveCamera;
+
+    for (const scene of registeredScenes) {
+      let cam: any = null;
+      try {
+        scene.traverse((o: any) => {
+          if (o && o.isCamera && !o.__isInspectorCamera && !cam) cam = o;
+        });
+      } catch (e) {}
+      if (cam) return cam;
+    }
+    return null;
   }
 
   function getActiveCanvas(): HTMLCanvasElement | null {
@@ -319,8 +291,69 @@ import { AnimationManager } from './animations';
     if (!renderer) return;
     if (!registeredRenderers.has(renderer)) {
       registeredRenderers.add(renderer);
+      hookRenderer(renderer);
       emitDetection();
     }
+  }
+
+  function handleHookedRender(this: any, originalRender: any, scene: any, camera: any) {
+    try {
+      if (scene) registerScene(scene);
+      if (camera && !camera.__isInspectorCamera) {
+        lastActiveCamera = camera;
+      }
+      if (!registeredRenderers.has(this)) {
+        registeredRenderers.add(this);
+      }
+
+      let renderCam = camera;
+      if (debugCameraManager.isEnabled()) {
+        renderCam = debugCameraManager.getCamera(camera);
+        debugCameraManager.update();
+      }
+
+      gizmoManager.updateCamera(renderCam);
+
+      applyPinnedOverrides();
+
+      if (scene) {
+        if (isWireframeActive) {
+          scene.overrideMaterial = overrideWireframe;
+        } else if (scene.overrideMaterial === overrideWireframe) {
+          scene.overrideMaterial = null;
+        }
+      }
+
+      tickRender(this);
+
+      return originalRender.call(this, scene, renderCam);
+    } catch (err) {
+      console.warn('[Three.js Inspector] render hook fallback:', err);
+      return originalRender.call(this, scene, camera);
+    }
+  }
+
+  function hookRenderer(renderer: any) {
+    if (!renderer || renderer.__INSPECTOR_RENDER_HOOKED__) return;
+    renderer.__INSPECTOR_RENDER_HOOKED__ = true;
+
+    // Hook renderer prototype if accessible
+    try {
+      const proto = renderer.constructor?.prototype;
+      if (proto && !proto.__INSPECTOR_RENDER_HOOKED__) {
+        proto.__INSPECTOR_RENDER_HOOKED__ = true;
+        const protoRender = proto.render;
+        proto.render = function (scene: any, camera: any) {
+          return handleHookedRender.call(this, protoRender, scene, camera);
+        };
+      }
+    } catch (e) {}
+
+    // Hook instance directly
+    const originalRender = renderer.render;
+    renderer.render = function (scene: any, camera: any) {
+      return handleHookedRender.call(this, originalRender, scene, camera);
+    };
   }
 
   function applyPinnedOverrides() {
@@ -328,30 +361,6 @@ import { AnimationManager } from './animations';
       try {
         const obj = findObjectByUuid(uuid);
         if (!obj) continue;
-
-        if (obj.position) {
-          if (overrides['position.x'] !== undefined) obj.position.x = overrides['position.x'];
-          if (overrides['position.y'] !== undefined) obj.position.y = overrides['position.y'];
-          if (overrides['position.z'] !== undefined) obj.position.z = overrides['position.z'];
-        }
-
-        if (obj.rotation) {
-          if (overrides['rotationDegrees.x'] !== undefined) {
-            obj.rotation.x = (overrides['rotationDegrees.x'] * Math.PI) / 180;
-          }
-          if (overrides['rotationDegrees.y'] !== undefined) {
-            obj.rotation.y = (overrides['rotationDegrees.y'] * Math.PI) / 180;
-          }
-          if (overrides['rotationDegrees.z'] !== undefined) {
-            obj.rotation.z = (overrides['rotationDegrees.z'] * Math.PI) / 180;
-          }
-        }
-
-        if (obj.scale) {
-          if (overrides['scale.x'] !== undefined) obj.scale.x = overrides['scale.x'];
-          if (overrides['scale.y'] !== undefined) obj.scale.y = overrides['scale.y'];
-          if (overrides['scale.z'] !== undefined) obj.scale.z = overrides['scale.z'];
-        }
 
         if (overrides['light.intensity'] !== undefined && 'intensity' in obj) {
           obj.intensity = overrides['light.intensity'];
@@ -361,12 +370,6 @@ import { AnimationManager } from './animations';
         }
         if (overrides['visible'] !== undefined) {
           obj.visible = overrides['visible'];
-        }
-
-        if (typeof obj.updateMatrix === 'function') obj.updateMatrix();
-        if (typeof obj.updateMatrixWorld === 'function') obj.updateMatrixWorld(true);
-        if (obj.isCamera && typeof obj.updateProjectionMatrix === 'function') {
-          obj.updateProjectionMatrix();
         }
       } catch (e) {}
     }
@@ -746,9 +749,18 @@ import { AnimationManager } from './animations';
 
     const cam = getActiveCamera();
     const canvas = getActiveCanvas();
-    const scene = getActiveScene();
-    if (cam && canvas && scene) {
-      gizmoManager.attach(target, cam, canvas, scene);
+    let targetScene = getActiveScene();
+    let p = target;
+    while (p) {
+      if (p.isScene || registeredScenes.has(p)) {
+        targetScene = p;
+        break;
+      }
+      p = p.parent;
+    }
+
+    if (cam && canvas && targetScene) {
+      gizmoManager.attach(target, cam, canvas, targetScene);
     }
 
     try {
@@ -785,13 +797,13 @@ import { AnimationManager } from './animations';
       helper.name = '__THREE_INSPECTOR_HELPER__';
 
       let rootScene = Array.from(registeredScenes)[0];
-      let p = target;
-      while (p) {
-        if (p.isScene || registeredScenes.has(p)) {
-          rootScene = p;
+      let sp = target;
+      while (sp) {
+        if (sp.isScene || registeredScenes.has(sp)) {
+          rootScene = sp;
           break;
         }
-        p = p.parent;
+        sp = sp.parent;
       }
 
       if (rootScene) {
@@ -813,7 +825,6 @@ import { AnimationManager } from './animations';
       const [rootProp, subProp] = path;
 
       if (rootProp === 'position' && subProp && obj.position) {
-        pinProperty(obj, `position.${subProp}`, Number(value));
         obj.position[subProp] = Number(value);
         obj.matrixAutoUpdate = true;
         obj.matrixWorldNeedsUpdate = true;
@@ -821,7 +832,6 @@ import { AnimationManager } from './animations';
         if (typeof obj.updateMatrixWorld === 'function') obj.updateMatrixWorld(true);
         if (obj.isCamera && typeof obj.updateProjectionMatrix === 'function') obj.updateProjectionMatrix();
       } else if (rootProp === 'rotationDegrees' && subProp && obj.rotation) {
-        pinProperty(obj, `rotationDegrees.${subProp}`, Number(value));
         obj.rotation[subProp] = (Number(value) * Math.PI) / 180;
         obj.matrixAutoUpdate = true;
         obj.matrixWorldNeedsUpdate = true;
@@ -829,7 +839,6 @@ import { AnimationManager } from './animations';
         if (typeof obj.updateMatrixWorld === 'function') obj.updateMatrixWorld(true);
         if (obj.isCamera && typeof obj.updateProjectionMatrix === 'function') obj.updateProjectionMatrix();
       } else if (rootProp === 'scale' && subProp && obj.scale) {
-        pinProperty(obj, `scale.${subProp}`, Number(value));
         obj.scale[subProp] = Number(value);
         obj.matrixAutoUpdate = true;
         obj.matrixWorldNeedsUpdate = true;
@@ -1000,58 +1009,15 @@ import { AnimationManager } from './animations';
     } catch (e) {}
   }
 
-  // Unified single hook on WebGLRenderer
+  // Hook prototype if THREE.WebGLRenderer is globally accessible
   function hookRendererPrototype() {
     const THREE = (window as any).THREE;
     if (THREE && THREE.WebGLRenderer && !THREE.WebGLRenderer.__INSPECTOR_HOOKED__) {
       THREE.WebGLRenderer.__INSPECTOR_HOOKED__ = true;
       const originalRender = THREE.WebGLRenderer.prototype.render;
-
       THREE.WebGLRenderer.prototype.render = function (scene: any, camera: any) {
-        registerRenderer(this);
-        if (scene) registerScene(scene);
-        if (camera && !camera.__isInspectorCamera) lastActiveCamera = camera;
-
-        if (simulationPaused && !stepOneFrame) {
-          return;
-        }
-        if (stepOneFrame) {
-          stepOneFrame = false;
-        }
-
-        let renderCam = camera;
-        try {
-          if (debugCameraManager.isEnabled()) {
-            renderCam = debugCameraManager.getCamera(camera);
-            debugCameraManager.update();
-          }
-        } catch (e) {}
-
-        try {
-          gizmoManager.updateCamera(renderCam);
-        } catch (e) {}
-
-        try {
-          applyPinnedOverrides();
-        } catch (e) {}
-
-        try {
-          if (scene) {
-            if (isWireframeActive) {
-              scene.overrideMaterial = overrideWireframe;
-            } else if (scene.overrideMaterial === overrideWireframe) {
-              scene.overrideMaterial = null;
-            }
-          }
-        } catch (e) {}
-
-        try {
-          tickRender(this);
-        } catch (e) {}
-
-        return originalRender.call(this, scene, renderCam);
+        return handleHookedRender.call(this, originalRender, scene, camera);
       };
-
       emitDetection();
     }
   }
@@ -1117,26 +1083,24 @@ import { AnimationManager } from './animations';
         break;
 
       case 'SET_GIZMO_MODE':
-        if (payload?.mode) gizmoManager.setMode(payload.mode);
+        if (payload?.mode) {
+          const cam = getActiveCamera();
+          const canvas = getActiveCanvas();
+          const scene = getActiveScene();
+          gizmoManager.setMode(payload.mode, cam, canvas || undefined, scene);
+        }
         break;
 
       case 'FOCUS_OBJECT':
         if (payload?.uuid) {
           const obj = findObjectByUuid(payload.uuid);
+          const canvas = getActiveCanvas();
           const cam = getActiveCamera();
-          if (obj && cam) {
-            const isNowFocused = gizmoManager.toggleFocus(obj, cam);
+          if (obj && canvas) {
+            const isNowFocused = debugCameraManager.focusOn(obj, canvas, cam);
             emit('FOCUS_STATE_CHANGED', { isFocused: isNowFocused });
           }
         }
-        break;
-
-      case 'TOGGLE_PAUSE_SCENE':
-        simulationPaused = Boolean(payload?.enabled);
-        break;
-
-      case 'STEP_SIMULATION_FRAME':
-        stepOneFrame = true;
         break;
 
       case 'CONTROL_ANIMATION':
@@ -1217,25 +1181,27 @@ import { AnimationManager } from './animations';
           unpinObjectProperties,
           toggleWireframe,
           isWireframeActive: () => isWireframeActive,
-          setGizmoMode: (mode: GizmoMode) => gizmoManager.setMode(mode),
+          setGizmoMode: (mode: GizmoMode) => {
+            const cam = getActiveCamera();
+            const canvas = getActiveCanvas();
+            const scene = getActiveScene();
+            gizmoManager.setMode(mode, cam, canvas || undefined, scene);
+          },
           getGizmoMode: () => gizmoManager.getMode(),
           toggleFocus: (uuid: string) => {
             const obj = findObjectByUuid(uuid);
+            const canvas = getActiveCanvas();
             const cam = getActiveCamera();
-            if (obj && cam) {
-              const isNowFocused = gizmoManager.toggleFocus(obj, cam);
+            if (obj && canvas) {
+              const isNowFocused = debugCameraManager.focusOn(obj, canvas, cam);
               return isNowFocused;
             }
             return false;
           },
           revertFocus: () => {
-            const cam = getActiveCamera();
-            if (cam) {
-              return gizmoManager.revertFocus(cam);
-            }
-            return false;
+            return debugCameraManager.revertFocus();
           },
-          isFocused: (uuid?: string) => gizmoManager.isFocused(uuid),
+          isFocused: () => debugCameraManager.isFocusActive(),
           toggleDebugCamera: () => {
             const canvas = getActiveCanvas();
             if (canvas) {
@@ -1248,13 +1214,6 @@ import { AnimationManager } from './animations';
             return debugCameraManager.isEnabled();
           },
           isDebugCameraActive: () => debugCameraManager.isEnabled(),
-          togglePauseSimulation: (enable?: boolean) => {
-            simulationPaused = enable !== undefined ? enable : !simulationPaused;
-            return simulationPaused;
-          },
-          stepSimulationFrame: () => {
-            stepOneFrame = true;
-          },
           downloadTexture: (uuid: string) => {
             const tex = allKnownTextures.get(uuid);
             if (tex) ExporterManager.downloadTexture(tex);
@@ -1317,6 +1276,14 @@ import { AnimationManager } from './animations';
     if ((window as any).renderer && (window as any).renderer.render) {
       registerRenderer((window as any).renderer);
     }
+
+    // Inspect active canvases
+    const canvases = document.querySelectorAll('canvas');
+    canvases.forEach((c: any) => {
+      if (c.__threeRenderer) {
+        registerRenderer(c.__threeRenderer);
+      }
+    });
 
     if (checkCount > 30 && registeredScenes.size > 0 && registeredRenderers.size > 0) {
       clearInterval(interval);

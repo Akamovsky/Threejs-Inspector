@@ -5,8 +5,6 @@ import {
   setGizmoMode,
   toggleDebugCamera,
   toggleWireframe,
-  togglePauseSimulation,
-  stepSimulationFrame,
   refresh
 } from './bridge';
 import TreeView from './components/TreeView.vue';
@@ -27,9 +25,6 @@ import {
   Move,
   RotateCw,
   Maximize2,
-  Pause,
-  Play,
-  SkipForward,
   Film,
   History
 } from 'lucide-vue-next';
@@ -107,27 +102,6 @@ const activeTab = ref<'inspector' | 'stats' | 'animations' | 'edits'>('inspector
           <Grid :size="12" />
           <span>Wireframe</span>
         </button>
-
-        <!-- Simulation Controls: Pause & Step Frame -->
-        <div class="btn-group">
-          <button
-            class="action-btn icon-only"
-            :class="{ active: state.scenePaused }"
-            @click="togglePauseSimulation"
-            :title="state.scenePaused ? 'Resume Simulation' : 'Pause Simulation'"
-          >
-            <Play v-if="state.scenePaused" :size="12" style="color: #4ade80" />
-            <Pause v-else :size="12" />
-          </button>
-          <button
-            v-if="state.scenePaused"
-            class="action-btn icon-only"
-            @click="stepSimulationFrame"
-            title="Step +1 Frame"
-          >
-            <SkipForward :size="12" />
-          </button>
-        </div>
 
         <!-- Refresh -->
         <button class="action-btn icon-only" @click="refresh" title="Reload Scene">
