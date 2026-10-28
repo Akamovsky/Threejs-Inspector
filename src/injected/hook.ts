@@ -206,7 +206,11 @@ import { AnimationManager } from './animations';
       proto.__INSPECTOR_PL_HOOKED__ = true;
       const orig = proto.requestPointerLock;
       proto.requestPointerLock = function () {
-        if (debugCameraManager.isEnabled() || gizmoManager.isDragging()) {
+        if (
+          debugCameraManager.isEnabled() ||
+          gizmoManager.isDragging() ||
+          gizmoManager.getMode() !== 'none'
+        ) {
           if (document.pointerLockElement) {
             try {
               document.exitPointerLock();
@@ -940,11 +944,7 @@ import { AnimationManager } from './animations';
     const scene = getObjectScene(target);
 
     if (cam && canvas && scene) {
-      if (gizmoManager.getMode() !== 'none') {
-        gizmoManager.attach(target, cam, canvas, scene);
-      } else {
-        gizmoManager.detach();
-      }
+      gizmoManager.setTarget(target, cam, canvas, scene);
     }
 
     try {
@@ -1071,6 +1071,9 @@ import { AnimationManager } from './animations';
         if (typeof obj.updateMatrixWorld === 'function') obj.updateMatrixWorld(true);
         if (obj.isCamera && typeof obj.updateProjectionMatrix === 'function') obj.updateProjectionMatrix();
       } else if (rootProp === 'scale' && subProp && obj.scale) {
+        if (obj.isLight || obj.type?.includes('Light')) {
+          return; // Lights cannot and should not be scaled
+        }
         obj.scale[subProp] = Number(value);
         obj.matrixAutoUpdate = true;
         obj.matrixWorldNeedsUpdate = true;
@@ -1333,7 +1336,8 @@ import { AnimationManager } from './animations';
           const cam = getActiveCamera();
           const canvas = getActiveCanvas();
           const scene = getActiveScene();
-          gizmoManager.setMode(payload.mode, cam, canvas || undefined, scene);
+          const target = activeSelectedUuid ? findObjectByUuid(activeSelectedUuid) : null;
+          gizmoManager.setMode(payload.mode, cam, canvas || undefined, scene, target);
         }
         break;
 
@@ -1431,7 +1435,8 @@ import { AnimationManager } from './animations';
             const cam = getActiveCamera();
             const canvas = getActiveCanvas();
             const scene = getActiveScene();
-            gizmoManager.setMode(mode, cam, canvas || undefined, scene);
+            const target = activeSelectedUuid ? findObjectByUuid(activeSelectedUuid) : null;
+            gizmoManager.setMode(mode, cam, canvas || undefined, scene, target);
           },
           getGizmoMode: () => gizmoManager.getMode(),
           toggleFocus: (uuid: string) => {

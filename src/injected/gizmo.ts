@@ -12,6 +12,7 @@ export class GizmoManager {
   private helperRoot = new Group();
   private onTransformChange?: (obj: any) => void;
   private onDraggingChange?: (isDragging: boolean) => void;
+  private hookedDomElement: HTMLElement | null = null;
 
   constructor() {
     this.helperRoot.name = '__THREE_INSPECTOR_HELPERS__';
@@ -76,16 +77,37 @@ export class GizmoManager {
         } catch (e) {}
       }
     }
+
+    // Intercept capture-phase pointerdown on canvas so that clicks/drags on gizmo handles
+    // do not bubble into the game engine's pointer-lock or mouse-look handlers
+    if (domElement && this.hookedDomElement !== domElement) {
+      this.hookedDomElement = domElement;
+      domElement.addEventListener(
+        'pointerdown',
+        (e: PointerEvent) => {
+          if (!this.transformControls || !this.transformControls.enabled || this.currentMode === 'none') {
+            return;
+          }
+          if (this.transformControls.axis !== null) {
+            e.stopPropagation();
+          }
+        },
+        { capture: true }
+      );
+    }
   }
 
-  public attach(object: any, camera: any, domElement: HTMLElement, scene: any) {
+  // Set the current target object (cached so mode switches can attach/detach seamlessly)
+  public setTarget(object: any, camera: any, domElement: HTMLElement, scene: any) {
     this.targetObject = object;
     this.initControls(camera, domElement, scene);
 
     if (this.transformControls) {
       this.transformControls.camera = camera;
       if (object && this.currentMode !== 'none') {
-        this.transformControls.setMode(this.currentMode);
+        const isLight = Boolean(object.isLight || object.type?.includes('Light'));
+        const activeMode = (isLight && this.currentMode === 'scale') ? 'translate' : this.currentMode;
+        this.transformControls.setMode(activeMode);
         this.transformControls.attach(object);
       } else {
         this.transformControls.detach();
@@ -93,8 +115,12 @@ export class GizmoManager {
     }
   }
 
-  public detach() {
-    this.targetObject = null;
+  public attach(object: any, camera: any, domElement: HTMLElement, scene: any) {
+    this.setTarget(object, camera, domElement, scene);
+  }
+
+  // Detach the visual gizmo handles from the object without forgetting the target
+  public detachGizmoOnly() {
     if (this.transformControls) {
       try {
         this.transformControls.detach();
@@ -102,7 +128,22 @@ export class GizmoManager {
     }
   }
 
-  public setMode(mode: GizmoMode, camera?: any, domElement?: HTMLElement, scene?: any) {
+  // Full detach (used only when an object is completely deselected)
+  public detach() {
+    this.targetObject = null;
+    this.detachGizmoOnly();
+  }
+
+  public setMode(mode: GizmoMode, camera?: any, domElement?: HTMLElement, scene?: any, target?: any) {
+    if (target) {
+      this.targetObject = target;
+    }
+
+    const isLight = Boolean(this.targetObject?.isLight || this.targetObject?.type?.includes('Light'));
+    if (isLight && mode === 'scale') {
+      mode = 'translate';
+    }
+
     this.currentMode = mode;
 
     if (!this.transformControls && camera && domElement && scene) {
@@ -125,6 +166,10 @@ export class GizmoManager {
 
   public getMode(): GizmoMode {
     return this.currentMode;
+  }
+
+  public getTarget(): any {
+    return this.targetObject;
   }
 
   public updateCamera(camera: any) {

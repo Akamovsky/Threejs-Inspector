@@ -34,6 +34,7 @@ const activeTab = computed({
   get: () => state.activeTab,
   set: (val) => { state.activeTab = val; }
 });
+const isLightSelected = computed(() => Boolean(state.selectedObject?.light || state.selectedObject?.type?.includes('Light')));
 </script>
 
 <template>
@@ -76,9 +77,10 @@ const activeTab = computed({
           </button>
           <button
             class="action-btn icon-only"
-            :class="{ active: state.gizmoMode === 'scale' }"
-            @click="setGizmoMode(state.gizmoMode === 'scale' ? 'none' : 'scale')"
-            title="Scale Gizmo (R)"
+            :class="{ active: state.gizmoMode === 'scale', disabled: isLightSelected }"
+            :disabled="isLightSelected"
+            @click="!isLightSelected && setGizmoMode(state.gizmoMode === 'scale' ? 'none' : 'scale')"
+            :title="isLightSelected ? 'Lights cannot be scaled' : 'Scale Gizmo (R)'"
           >
             <Maximize2 :size="12" />
           </button>

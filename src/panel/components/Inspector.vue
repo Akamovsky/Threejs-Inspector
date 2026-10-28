@@ -32,6 +32,7 @@ import {
 } from 'lucide-vue-next';
 
 const obj = computed(() => state.selectedObject);
+const isLight = computed(() => Boolean(obj.value?.light || obj.value?.type?.includes('Light')));
 const copiedCode = ref(false);
 const activeMaterialTab = ref<'properties' | 'shader'>('properties');
 const editedVertexShader = ref('');
@@ -182,6 +183,7 @@ function applyShaders() {
             Rotate
           </button>
           <button
+            v-if="!isLight"
             class="gizmo-btn"
             :class="{ active: state.gizmoMode === 'scale' }"
             @click="setGizmoMode('scale')"
@@ -261,8 +263,8 @@ function applyShaders() {
             </div>
           </div>
 
-          <!-- Scale -->
-          <div class="field-row">
+          <!-- Scale (Hidden for lights) -->
+          <div v-if="!isLight" class="field-row">
             <span class="field-label">Scale</span>
             <div class="xyz-group">
               <div class="axis-input x">
