@@ -181,8 +181,24 @@ export function logSessionEdit(uuid: string, objectName: string, path: string, v
   }
 }
 
-export function selectObject(uuid: string) {
+export function selectObject(uuid: string | null) {
   state.selectedUuid = uuid;
+  state.selectedObject = null;
+
+  if (!uuid) {
+    const script = `
+      (function() {
+        if (window.__THREE_INSPECTOR__) {
+          return window.__THREE_INSPECTOR__.selectObject(null);
+        }
+        return null;
+      })()
+    `;
+    executeInPage(script);
+    send('SELECT_OBJECT', { uuid: null });
+    return;
+  }
+
   state.activeTab = 'inspector';
 
   const script = `
@@ -194,8 +210,8 @@ export function selectObject(uuid: string) {
     })()
   `;
   executeInPage(script, (details) => {
-    if (details && details.uuid) {
-      state.selectedObject = details;
+    if (state.selectedUuid === uuid) {
+      state.selectedObject = (details && details.uuid === uuid) ? details : null;
     }
   });
 
@@ -277,8 +293,12 @@ export function revertFocus() {
 // Window Escape key handler in DevTools panel
 if (typeof window !== 'undefined') {
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.isFocused) {
-      revertFocus();
+    if (e.key === 'Escape') {
+      if (state.isFocused) {
+        revertFocus();
+      } else if (state.selectedUuid) {
+        selectObject(null);
+      }
     }
   });
 }

@@ -101,7 +101,11 @@ const filteredGeometries = computed(() => {
 
 // Selection handler
 function handleSelect(uuid: string) {
-  selectObject(uuid);
+  if (state.selectedUuid === uuid) {
+    selectObject(null);
+  } else {
+    selectObject(uuid);
+  }
 }
 
 function handleHover(uuid: string | null) {
@@ -122,7 +126,7 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
 </script>
 
 <template>
-  <div class="category-view-container">
+  <div class="category-view-container" @click.self="selectObject(null)">
     <!-- Filter Input -->
     <div class="category-search-bar">
       <div class="search-input-wrapper">
@@ -137,7 +141,7 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
     </div>
 
     <!-- Category Sections List -->
-    <div class="category-scroll-area">
+    <div class="category-scroll-area" @click.self="selectObject(null)">
       <div v-if="!categories" class="loading-state">
         Scanning scene categories...
       </div>

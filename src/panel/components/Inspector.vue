@@ -8,7 +8,8 @@ import {
   setGizmoMode,
   toggleFocusObject,
   copyThreeCode,
-  downloadTexture
+  downloadTexture,
+  selectObject
 } from '../bridge';
 import {
   Terminal,
@@ -26,7 +27,8 @@ import {
   Download,
   Code,
   Check,
-  Image as ImageIcon
+  Image as ImageIcon,
+  X
 } from 'lucide-vue-next';
 
 const obj = computed(() => state.selectedObject);
@@ -114,6 +116,12 @@ function applyShaders() {
             <button class="tool-btn console-btn" @click="handleConsoleLog" title="Expose to console as $three">
               <Terminal :size="12" />
               <span>$three</span>
+            </button>
+
+            <!-- Deselect / Clear Selection -->
+            <button class="tool-btn deselect-btn" @click="selectObject(null)" title="Deselect object (Esc)">
+              <X :size="12" />
+              <span>Deselect</span>
             </button>
           </div>
         </div>
@@ -697,6 +705,12 @@ function applyShaders() {
   color: #38bdf8;
   border-color: #38bdf8;
   font-weight: 600;
+}
+
+.deselect-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border-color: #ef4444;
 }
 
 .console-btn {

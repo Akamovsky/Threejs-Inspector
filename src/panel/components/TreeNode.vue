@@ -53,7 +53,11 @@ function toggleExpand(e: MouseEvent) {
 }
 
 function handleSelect() {
-  selectObject(props.node.uuid);
+  if (isSelected.value) {
+    selectObject(null);
+  } else {
+    selectObject(props.node.uuid);
+  }
 }
 
 function handleMouseEnter() {

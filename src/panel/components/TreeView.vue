@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { state, refresh } from '../bridge';
+import { state, refresh, selectObject } from '../bridge';
 import TreeNode from './TreeNode.vue';
 import { Search, RefreshCw, Layers } from 'lucide-vue-next';
 </script>
 
 <template>
-  <div class="tree-view-container">
+  <div class="tree-view-container" @click.self="selectObject(null)">
     <!-- Filter bar -->
     <div class="tree-search-bar">
       <div class="search-input-wrapper">
@@ -23,7 +23,7 @@ import { Search, RefreshCw, Layers } from 'lucide-vue-next';
     </div>
 
     <!-- Tree Content -->
-    <div class="tree-content-scroll">
+    <div class="tree-content-scroll" @click.self="selectObject(null)">
       <div v-if="state.scenes.length === 0" class="empty-state">
         <Layers :size="32" class="empty-icon" />
         <p class="empty-title">No Three.js Scene Found</p>

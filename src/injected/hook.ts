@@ -242,10 +242,12 @@ import { AnimationManager } from './animations';
   }
 
   function findObjectByUuid(uuid: string): any {
+    if (!uuid) return null;
     if (uuidToObjectMap.has(uuid)) {
       return uuidToObjectMap.get(uuid);
     }
     for (const scene of registeredScenes) {
+      if (!scene) continue;
       let found: any = null;
       try {
         scene.traverse((o: any) => {
@@ -256,6 +258,16 @@ import { AnimationManager } from './animations';
         });
       } catch (e) {}
       if (found) return found;
+    }
+    if (lastActiveCamera) {
+      try {
+        lastActiveCamera.traverse((o: any) => {
+          if (o && o.uuid) {
+            uuidToObjectMap.set(o.uuid, o);
+          }
+        });
+        if (uuidToObjectMap.has(uuid)) return uuidToObjectMap.get(uuid);
+      } catch (e) {}
     }
     return null;
   }
@@ -752,102 +764,122 @@ import { AnimationManager } from './animations';
   }
 
   function extractObjectDetails(obj: any): ObjectDetails | null {
-    if (!obj) return null;
+    if (!obj || !obj.uuid) return null;
 
     try {
-      const rotDeg = obj.rotation ? {
-        x: +(obj.rotation.x * (180 / Math.PI)).toFixed(2),
-        y: +(obj.rotation.y * (180 / Math.PI)).toFixed(2),
-        z: +(obj.rotation.z * (180 / Math.PI)).toFixed(2)
-      } : { x: 0, y: 0, z: 0 };
+      let posX = 0, posY = 0, posZ = 0;
+      if (obj.position) {
+        posX = typeof obj.position.x === 'number' ? +obj.position.x.toFixed(3) : 0;
+        posY = typeof obj.position.y === 'number' ? +obj.position.y.toFixed(3) : 0;
+        posZ = typeof obj.position.z === 'number' ? +obj.position.z.toFixed(3) : 0;
+      }
+
+      let rotX = 0, rotY = 0, rotZ = 0;
+      let rotDegX = 0, rotDegY = 0, rotDegZ = 0;
+      if (obj.rotation) {
+        rotX = typeof obj.rotation.x === 'number' ? +obj.rotation.x.toFixed(4) : 0;
+        rotY = typeof obj.rotation.y === 'number' ? +obj.rotation.y.toFixed(4) : 0;
+        rotZ = typeof obj.rotation.z === 'number' ? +obj.rotation.z.toFixed(4) : 0;
+        rotDegX = +(rotX * (180 / Math.PI)).toFixed(2);
+        rotDegY = +(rotY * (180 / Math.PI)).toFixed(2);
+        rotDegZ = +(rotZ * (180 / Math.PI)).toFixed(2);
+      }
+
+      let scaleX = 1, scaleY = 1, scaleZ = 1;
+      if (obj.scale) {
+        scaleX = typeof obj.scale.x === 'number' ? +obj.scale.x.toFixed(3) : 1;
+        scaleY = typeof obj.scale.y === 'number' ? +obj.scale.y.toFixed(3) : 1;
+        scaleZ = typeof obj.scale.z === 'number' ? +obj.scale.z.toFixed(3) : 1;
+      }
 
       let geometry: GeometryInfo | null = null;
       if (obj.geometry && !isInternalInspectorObject(obj.geometry)) {
-        const geo = obj.geometry;
-        let verticesCount = 0;
-        let facesCount = 0;
+        try {
+          const geo = obj.geometry;
+          let verticesCount = 0;
+          let facesCount = 0;
 
-        if (geo.attributes?.position) {
-          verticesCount = geo.attributes.position.count;
-        }
-        if (geo.index) {
-          facesCount = geo.index.count / 3;
-        } else if (verticesCount > 0) {
-          facesCount = verticesCount / 3;
-        }
+          if (geo.attributes?.position) {
+            verticesCount = geo.attributes.position.count || 0;
+          }
+          if (geo.index) {
+            facesCount = Math.floor((geo.index.count || 0) / 3);
+          } else if (verticesCount > 0) {
+            facesCount = Math.floor(verticesCount / 3);
+          }
 
-        geometry = {
-          uuid: geo.uuid || '',
-          type: geo.type || 'BufferGeometry',
-          verticesCount,
-          facesCount: Math.floor(facesCount),
-          hasNormals: Boolean(geo.attributes?.normal),
-          hasUVs: Boolean(geo.attributes?.uv),
-          hasColors: Boolean(geo.attributes?.color),
-          parameters: geo.parameters || undefined,
-          memoryBytes: MemoryAuditor.calculateGeometryBytes(geo)
-        };
+          let memBytes = 0;
+          try {
+            memBytes = MemoryAuditor.calculateGeometryBytes(geo);
+          } catch {}
+
+          geometry = {
+            uuid: geo.uuid || '',
+            type: geo.type || 'BufferGeometry',
+            verticesCount,
+            facesCount,
+            hasNormals: Boolean(geo.attributes?.normal),
+            hasUVs: Boolean(geo.attributes?.uv),
+            hasColors: Boolean(geo.attributes?.color),
+            parameters: geo.parameters || undefined,
+            memoryBytes: memBytes
+          };
+        } catch (e) {}
       }
 
       let material: MaterialInfo | MaterialInfo[] | null = null;
       if (obj.material) {
-        if (Array.isArray(obj.material)) {
-          material = obj.material.filter((m: any) => !isInternalInspectorObject(m)).map(extractMaterialInfo);
-        } else if (!isInternalInspectorObject(obj.material)) {
-          material = extractMaterialInfo(obj.material);
-        }
+        try {
+          if (Array.isArray(obj.material)) {
+            material = obj.material.filter((m: any) => m && !isInternalInspectorObject(m)).map(extractMaterialInfo);
+          } else if (!isInternalInspectorObject(obj.material)) {
+            material = extractMaterialInfo(obj.material);
+          }
+        } catch (e) {}
       }
 
       let light: LightInfo | null = null;
       if (obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
-        light = {
-          color: colorToHex(obj.color),
-          intensity: typeof obj.intensity === 'number' ? obj.intensity : 1,
-          distance: obj.distance,
-          decay: obj.decay,
-          angle: obj.angle,
-          penumbra: obj.penumbra,
-          groundColor: obj.groundColor ? colorToHex(obj.groundColor) : undefined
-        };
+        try {
+          light = {
+            color: colorToHex(obj.color),
+            intensity: typeof obj.intensity === 'number' ? obj.intensity : 1,
+            distance: obj.distance,
+            decay: obj.decay,
+            angle: obj.angle,
+            penumbra: obj.penumbra,
+            groundColor: obj.groundColor ? colorToHex(obj.groundColor) : undefined
+          };
+        } catch (e) {}
       }
 
       let camera: CameraInfo | null = null;
       if (obj.isCamera && !obj.__isInspectorCamera) {
-        camera = {
-          fov: obj.fov,
-          near: obj.near ?? 0.1,
-          far: obj.far ?? 1000,
-          zoom: obj.zoom ?? 1,
-          aspect: obj.aspect
-        };
+        try {
+          camera = {
+            fov: obj.fov,
+            near: obj.near ?? 0.1,
+            far: obj.far ?? 1000,
+            zoom: obj.zoom ?? 1,
+            aspect: obj.aspect
+          };
+        } catch (e) {}
       }
 
       return {
         id: obj.id,
         uuid: obj.uuid,
-        name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Object3D (${obj.id})`),
+        name: getObjectDisplayName(obj),
         type: obj.type || 'Object3D',
         visible: obj.visible !== false,
         castShadow: Boolean(obj.castShadow),
         receiveShadow: Boolean(obj.receiveShadow),
         frustumCulled: obj.frustumCulled !== false,
         renderOrder: obj.renderOrder || 0,
-        position: obj.position ? {
-          x: +obj.position.x.toFixed(3),
-          y: +obj.position.y.toFixed(3),
-          z: +obj.position.z.toFixed(3)
-        } : { x: 0, y: 0, z: 0 },
-        rotation: obj.rotation ? {
-          x: +obj.rotation.x.toFixed(4),
-          y: +obj.rotation.y.toFixed(4),
-          z: +obj.rotation.z.toFixed(4)
-        } : { x: 0, y: 0, z: 0 },
-        rotationDegrees: rotDeg,
-        scale: obj.scale ? {
-          x: +obj.scale.x.toFixed(3),
-          y: +obj.scale.y.toFixed(3),
-          z: +obj.scale.z.toFixed(3)
-        } : { x: 1, y: 1, z: 1 },
+        position: { x: posX, y: posY, z: posZ },
+        rotation: { x: rotX, y: rotY, z: rotZ },
+        rotationDegrees: { x: rotDegX, y: rotDegY, z: rotDegZ },
+        scale: { x: scaleX, y: scaleY, z: scaleZ },
         geometry,
         material,
         light,
@@ -855,7 +887,27 @@ import { AnimationManager } from './animations';
         userData: safeCloneUserData(obj.userData)
       };
     } catch (e) {
-      return null;
+      console.warn('[Three.js Inspector] extractObjectDetails fallback:', e);
+      return {
+        id: obj.id || 0,
+        uuid: obj.uuid || '',
+        name: getObjectDisplayName(obj),
+        type: obj.type || 'Object3D',
+        visible: obj.visible !== false,
+        castShadow: false,
+        receiveShadow: false,
+        frustumCulled: true,
+        renderOrder: 0,
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        rotationDegrees: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+        geometry: null,
+        material: null,
+        light: null,
+        camera: null,
+        userData: {}
+      };
     }
   }
 
@@ -1239,14 +1291,20 @@ import { AnimationManager } from './animations';
         break;
 
       case 'SELECT_OBJECT':
+        activeSelectedUuid = payload?.uuid || null;
         if (payload?.uuid) {
-          activeSelectedUuid = payload.uuid;
           const obj = findObjectByUuid(payload.uuid);
           if (obj) {
             setSelectedHighlight(payload.uuid);
             const details = extractObjectDetails(obj);
-            if (details) emit('OBJECT_DETAILS_DATA', details);
+            emit('OBJECT_DETAILS_DATA', details);
+          } else {
+            setSelectedHighlight(null);
+            emit('OBJECT_DETAILS_DATA', null);
           }
+        } else {
+          setSelectedHighlight(null);
+          emit('OBJECT_DETAILS_DATA', null);
         }
         break;
 
@@ -1430,13 +1488,18 @@ import { AnimationManager } from './animations';
           controlAnimation: (mixerId: string, clipName: string, action: any, value?: number) => {
             animationManager.control(mixerId, clipName, action, value);
           },
-          selectObject: (uuid: string) => {
-            activeSelectedUuid = uuid;
+          selectObject: (uuid: string | null) => {
+            activeSelectedUuid = uuid || null;
+            if (!uuid) {
+              setSelectedHighlight(null);
+              return null;
+            }
             const obj = findObjectByUuid(uuid);
             if (obj) {
               setSelectedHighlight(uuid);
               return extractObjectDetails(obj);
             }
+            setSelectedHighlight(null);
             return null;
           },
           setSelectedHighlight,
