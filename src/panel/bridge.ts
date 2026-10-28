@@ -200,8 +200,6 @@ export function selectObject(uuid: string) {
       state.selectedObject = details;
     }
   });
-
-  send('SELECT_OBJECT', { uuid });
 }
 
 let hoverDebounceTimer: any = null;
@@ -465,10 +463,25 @@ export function resetPropertyOverrides(uuid: string) {
 
 export function refresh() {
   const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.refresh();
-    }
+    (function() {
+      if (window.__THREE_INSPECTOR__) {
+        window.__THREE_INSPECTOR__.refresh();
+        return {
+          categories: typeof window.__THREE_INSPECTOR__.getCategorizedData === 'function' ? window.__THREE_INSPECTOR__.getCategorizedData() : null,
+          scenes: typeof window.__THREE_INSPECTOR__.getSceneGraph === 'function' ? window.__THREE_INSPECTOR__.getSceneGraph() : null
+        };
+      }
+      return null;
+    })()
   `;
-  executeInPage(script);
+  executeInPage(script, (data) => {
+    if (data?.categories) {
+      state.categories = data.categories;
+    }
+    if (data?.scenes) {
+      state.scenes = data.scenes;
+      state.statusMessage = `Loaded ${state.scenes.length} scene(s)`;
+    }
+  });
   send('REQUEST_SCENE_GRAPH');
 }

@@ -38,7 +38,7 @@ export class GizmoManager {
         this.transformControls.size = 0.85;
         this.transformControls.setMode(this.currentMode === 'none' ? 'translate' : this.currentMode);
 
-        this.transformControls.addEventListener('change', () => {
+        this.transformControls.addEventListener('objectChange', () => {
           if (this.targetObject && this.onTransformChange) {
             try {
               this.targetObject.matrixAutoUpdate = true;
@@ -128,7 +128,7 @@ export class GizmoManager {
   }
 
   public updateCamera(camera: any) {
-    if (this.transformControls && camera) {
+    if (this.transformControls && camera && this.transformControls.camera !== camera) {
       this.transformControls.camera = camera;
     }
   }

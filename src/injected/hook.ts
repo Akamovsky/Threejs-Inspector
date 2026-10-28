@@ -125,6 +125,10 @@ import { AnimationManager } from './animations';
       if (propPath === 'light.intensity') {
         let currentVal = Number(value);
         obj.__inspector_intensity = currentVal;
+        if (currentVal > 0) {
+          obj.visible = true;
+          overrides['visible'] = true;
+        }
         try {
           Object.defineProperty(obj, 'intensity', {
             get() {
@@ -400,6 +404,9 @@ import { AnimationManager } from './animations';
 
         if (overrides['light.intensity'] !== undefined && 'intensity' in obj) {
           obj.intensity = overrides['light.intensity'];
+          if (overrides['light.intensity'] > 0) {
+            obj.visible = true;
+          }
         }
         if (overrides['light.color'] !== undefined && obj.color) {
           hexToColor(obj.color, overrides['light.color']);
@@ -464,135 +471,137 @@ import { AnimationManager } from './animations';
 
       try {
         scene.traverse((obj: any) => {
-          if (!obj || !obj.isObject3D || isInternalInspectorObject(obj)) return;
+          try {
+            if (!obj || !obj.isObject3D || isInternalInspectorObject(obj)) return;
 
-          // Meshes & InstancedMeshes
-          if (obj.isMesh || obj.isInstancedMesh) {
-            // Exclude fullscreen postprocessing quads
-            if (obj.geometry?.type === 'FullscreenTriangleGeometry') return;
+            // Meshes & InstancedMeshes
+            if (obj.isMesh || obj.isInstancedMesh) {
+              // Exclude fullscreen postprocessing quads
+              if (obj.geometry?.type === 'FullscreenTriangleGeometry') return;
 
-            let verticesCount = 0;
-            let facesCount = 0;
-            let geoType = 'None';
-            let matType = 'None';
-            let matColor: string | undefined;
+              let verticesCount = 0;
+              let facesCount = 0;
+              let geoType = 'None';
+              let matType = 'None';
+              let matColor: string | undefined;
 
-            if (obj.geometry && !isInternalInspectorObject(obj.geometry)) {
-              geoType = obj.geometry.type || 'BufferGeometry';
-              if (obj.geometry.attributes?.position) {
-                verticesCount = obj.geometry.attributes.position.count;
-              }
-              if (obj.geometry.index) {
-                facesCount = Math.floor(obj.geometry.index.count / 3);
-              } else if (verticesCount > 0) {
-                facesCount = Math.floor(verticesCount / 3);
-              }
+              if (obj.geometry && !isInternalInspectorObject(obj.geometry)) {
+                geoType = obj.geometry.type || 'BufferGeometry';
+                if (obj.geometry.attributes?.position) {
+                  verticesCount = obj.geometry.attributes.position.count;
+                }
+                if (obj.geometry.index) {
+                  facesCount = Math.floor(obj.geometry.index.count / 3);
+                } else if (verticesCount > 0) {
+                  facesCount = Math.floor(verticesCount / 3);
+                }
 
-              const geoUuid = obj.geometry.uuid || `geo-${obj.id}`;
-              const memBytes = MemoryAuditor.calculateGeometryBytes(obj.geometry);
-              if (!geometryMap.has(geoUuid)) {
-                geometryMap.set(geoUuid, {
-                  uuid: geoUuid,
-                  name: obj.geometry.name || geoType,
-                  type: geoType,
-                  verticesCount,
-                  facesCount,
-                  memoryBytes: memBytes,
-                  linkedObjectUuids: [obj.uuid]
-                });
-              } else {
-                geometryMap.get(geoUuid)!.linkedObjectUuids.push(obj.uuid);
-              }
-            }
-
-            if (obj.material) {
-              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-              const validMats = mats.filter((m: any) => m && !isInternalInspectorObject(m));
-              matType = validMats.map((m: any) => m.type || 'Material').join(', ');
-              if (validMats[0]?.color) {
-                matColor = colorToHex(validMats[0].color);
-              }
-
-              validMats.forEach((m: any) => {
-                const matUuid = m.uuid || `mat-${obj.id}`;
-                if (!materialMap.has(matUuid)) {
-                  materialMap.set(matUuid, {
-                    uuid: matUuid,
-                    name: m.name || m.type || 'Material',
-                    type: m.type || 'Material',
-                    color: m.color ? colorToHex(m.color) : undefined,
-                    wireframe: Boolean(m.wireframe),
-                    transparent: Boolean(m.transparent),
-                    opacity: typeof m.opacity === 'number' ? m.opacity : 1,
+                const geoUuid = obj.geometry.uuid || `geo-${obj.id}`;
+                const memBytes = MemoryAuditor.calculateGeometryBytes(obj.geometry);
+                if (!geometryMap.has(geoUuid)) {
+                  geometryMap.set(geoUuid, {
+                    uuid: geoUuid,
+                    name: obj.geometry.name || geoType,
+                    type: geoType,
+                    verticesCount,
+                    facesCount,
+                    memoryBytes: memBytes,
                     linkedObjectUuids: [obj.uuid]
                   });
                 } else {
-                  materialMap.get(matUuid)!.linkedObjectUuids.push(obj.uuid);
+                  geometryMap.get(geoUuid)!.linkedObjectUuids.push(obj.uuid);
+                }
+              }
+
+              if (obj.material) {
+                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                const validMats = mats.filter((m: any) => m && !isInternalInspectorObject(m));
+                matType = validMats.map((m: any) => m.type || 'Material').join(', ');
+                if (validMats[0]?.color) {
+                  matColor = colorToHex(validMats[0].color);
                 }
 
-                const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
-                slots.forEach((slot) => {
-                  const tex = m[slot];
-                  if (tex && tex.isTexture && !isInternalInspectorObject(tex)) {
-                    const texUuid = tex.uuid || `tex-${slot}-${matUuid}`;
-                    const memBytes = MemoryAuditor.calculateTextureBytes(tex);
-                    if (!textureMap.has(texUuid)) {
-                      textureMap.set(texUuid, {
-                        uuid: texUuid,
-                        name: tex.name || `${m.name || 'Material'} ${slot}`,
-                        type: slot,
-                        width: tex.image?.width,
-                        height: tex.image?.height,
-                        format: tex.format ? String(tex.format) : undefined,
-                        mapping: tex.mapping ? String(tex.mapping) : undefined,
-                        dataUrl: ExporterManager.getTextureThumbnail(tex),
-                        memoryBytes: memBytes,
-                        linkedObjectUuids: [obj.uuid]
-                      });
-                    } else {
-                      textureMap.get(texUuid)!.linkedObjectUuids.push(obj.uuid);
-                    }
+                validMats.forEach((m: any) => {
+                  const matUuid = m.uuid || `mat-${obj.id}`;
+                  if (!materialMap.has(matUuid)) {
+                    materialMap.set(matUuid, {
+                      uuid: matUuid,
+                      name: m.name || m.type || 'Material',
+                      type: m.type || 'Material',
+                      color: m.color ? colorToHex(m.color) : undefined,
+                      wireframe: Boolean(m.wireframe),
+                      transparent: Boolean(m.transparent),
+                      opacity: typeof m.opacity === 'number' ? m.opacity : 1,
+                      linkedObjectUuids: [obj.uuid]
+                    });
+                  } else {
+                    materialMap.get(matUuid)!.linkedObjectUuids.push(obj.uuid);
                   }
+
+                  const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
+                  slots.forEach((slot) => {
+                    const tex = m[slot];
+                    if (tex && tex.isTexture && !isInternalInspectorObject(tex)) {
+                      const texUuid = tex.uuid || `tex-${slot}-${matUuid}`;
+                      const memBytes = MemoryAuditor.calculateTextureBytes(tex);
+                      if (!textureMap.has(texUuid)) {
+                        textureMap.set(texUuid, {
+                          uuid: texUuid,
+                          name: tex.name || `${m.name || 'Material'} ${slot}`,
+                          type: slot,
+                          width: tex.image?.width,
+                          height: tex.image?.height,
+                          format: tex.format ? String(tex.format) : undefined,
+                          mapping: tex.mapping ? String(tex.mapping) : undefined,
+                          dataUrl: undefined,
+                          memoryBytes: memBytes,
+                          linkedObjectUuids: [obj.uuid]
+                        });
+                      } else {
+                        textureMap.get(texUuid)!.linkedObjectUuids.push(obj.uuid);
+                      }
+                    }
+                  });
                 });
+              }
+
+              meshes.push({
+                id: obj.id,
+                uuid: obj.uuid,
+                name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Mesh (${obj.id})`),
+                type: obj.type || 'Mesh',
+                geometryType: geoType,
+                materialType: matType,
+                materialColor: matColor,
+                verticesCount,
+                facesCount,
+                visible: obj.visible !== false
               });
             }
 
-            meshes.push({
-              id: obj.id,
-              uuid: obj.uuid,
-              name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Mesh (${obj.id})`),
-              type: obj.type || 'Mesh',
-              geometryType: geoType,
-              materialType: matType,
-              materialColor: matColor,
-              verticesCount,
-              facesCount,
-              visible: obj.visible !== false
-            });
-          }
+            if (obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
+              lights.push({
+                id: obj.id,
+                uuid: obj.uuid,
+                name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Light (${obj.id})`),
+                type: obj.type || 'Light',
+                color: colorToHex(obj.color),
+                intensity: typeof obj.intensity === 'number' ? obj.intensity : 1,
+                visible: obj.visible !== false
+              });
+            }
 
-          if (obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
-            lights.push({
-              id: obj.id,
-              uuid: obj.uuid,
-              name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Light (${obj.id})`),
-              type: obj.type || 'Light',
-              color: colorToHex(obj.color),
-              intensity: typeof obj.intensity === 'number' ? obj.intensity : 1,
-              visible: obj.visible !== false
-            });
-          }
-
-          if (obj.isCamera && !obj.__isInspectorCamera) {
-            cameras.push({
-              id: obj.id,
-              uuid: obj.uuid,
-              name: obj.name || `Camera (${obj.id})`,
-              type: obj.type || 'Camera',
-              fov: obj.fov,
-              visible: obj.visible !== false
-            });
-          }
+            if (obj.isCamera && !obj.__isInspectorCamera) {
+              cameras.push({
+                id: obj.id,
+                uuid: obj.uuid,
+                name: obj.name || `Camera (${obj.id})`,
+                type: obj.type || 'Camera',
+                fov: obj.fov,
+                visible: obj.visible !== false
+              });
+            }
+          } catch (e) {}
         });
       } catch (e) {}
     }
@@ -631,7 +640,7 @@ import { AnimationManager } from './animations';
           slot: s,
           uuid: tex.uuid,
           name: tex.name || s,
-          dataUrl: ExporterManager.getTextureThumbnail(tex),
+          dataUrl: (typeof tex.image?.src === 'string' && tex.image.src.startsWith('data:')) ? tex.image.src : undefined,
           width: tex.image?.width,
           height: tex.image?.height,
           format: tex.format ? String(tex.format) : undefined,
@@ -659,6 +668,32 @@ import { AnimationManager } from './animations';
       vertexShader: mat.vertexShader,
       fragmentShader: mat.fragmentShader
     };
+  }
+
+  function safeCloneUserData(userData: any): Record<string, any> {
+    if (!userData || typeof userData !== 'object') return {};
+    try {
+      const clean: Record<string, any> = {};
+      for (const key of Object.keys(userData)) {
+        const val = userData[key];
+        if (typeof val === 'function' || typeof val === 'symbol') continue;
+        if (typeof val === 'object' && val !== null) {
+          if (val.isObject3D || val.isScene || val.isCamera || val.isRenderer || val.nodeType) {
+            continue;
+          }
+          try {
+            clean[key] = JSON.parse(JSON.stringify(val));
+          } catch {
+            clean[key] = '[Complex Object]';
+          }
+        } else {
+          clean[key] = val;
+        }
+      }
+      return clean;
+    } catch {
+      return {};
+    }
   }
 
   function extractObjectDetails(obj: any): ObjectDetails | null {
@@ -762,7 +797,7 @@ import { AnimationManager } from './animations';
         material,
         light,
         camera,
-        userData: obj.userData || {}
+        userData: safeCloneUserData(obj.userData)
       };
     } catch (e) {
       return null;
@@ -1073,7 +1108,7 @@ import { AnimationManager } from './animations';
         emit('STATS_UPDATE', stats);
       }
 
-      if (selectedHighlightHelper && selectedHighlightTarget) {
+      if (selectedHighlightHelper && selectedHighlightTarget && gizmoManager.isDragging()) {
         if (typeof selectedHighlightHelper.update === 'function') {
           selectedHighlightHelper.update();
         } else if (selectedHighlightHelper.box) {
@@ -1331,6 +1366,15 @@ import { AnimationManager } from './animations';
             return null;
           },
           setSelectedHighlight,
+          getCategorizedData: () => extractCategorizedData(),
+          getSceneGraph: () => {
+            const scenes: SerializedNode[] = [];
+            for (const scene of registeredScenes) {
+              const serialized = serializeNode(scene);
+              if (serialized) scenes.push(serialized);
+            }
+            return scenes;
+          },
           getScenes: () => Array.from(registeredScenes),
           getRenderers: () => Array.from(registeredRenderers),
           refresh: () => {

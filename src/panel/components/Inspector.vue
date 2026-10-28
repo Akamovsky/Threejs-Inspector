@@ -34,6 +34,14 @@ const copiedCode = ref(false);
 const activeMaterialTab = ref<'properties' | 'shader'>('properties');
 const editedVertexShader = ref('');
 const editedFragmentShader = ref('');
+const lightMaxRange = ref(10);
+
+function handleIntensityChange(val: number) {
+  if (!obj.value || !obj.value.light) return;
+  const num = Number(val);
+  obj.value.light.intensity = num;
+  update(['light', 'intensity'], num);
+}
 
 function update(path: string[], value: any) {
   if (!obj.value) return;
@@ -519,25 +527,47 @@ function applyShaders() {
             </div>
           </div>
           <div class="field-row">
-            <span class="field-label">Intensity ({{ obj.light.intensity }})</span>
-            <div class="slider-with-input">
-              <input
-                type="range"
-                min="0"
-                :max="Math.max(20, Math.ceil(obj.light.intensity * 2))"
-                step="0.05"
-                v-model.number="obj.light.intensity"
-                @input="update(['light', 'intensity'], obj.light.intensity)"
-                class="range-slider"
-              />
-              <input
-                type="number"
-                step="0.05"
-                min="0"
-                v-model.number="obj.light.intensity"
-                @input="update(['light', 'intensity'], obj.light.intensity)"
-                class="mini-num-input"
-              />
+            <div class="intensity-label-row">
+              <span class="field-label">Intensity</span>
+              <span class="intensity-value-badge">{{ Number(obj.light.intensity ?? 0).toFixed(2) }}</span>
+            </div>
+            <div class="intensity-slider-wrapper">
+              <div class="slider-track-row">
+                <span class="bound-tag start-bound" title="Minimum bound">0</span>
+                <input
+                  type="range"
+                  min="0"
+                  :max="lightMaxRange"
+                  step="0.05"
+                  v-model.number="obj.light.intensity"
+                  @input="handleIntensityChange(obj.light.intensity)"
+                  class="range-slider intensity-range"
+                />
+                <span class="bound-tag end-bound" :title="`Maximum bound: ${lightMaxRange}`">{{ lightMaxRange }}</span>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  v-model.number="obj.light.intensity"
+                  @input="handleIntensityChange(obj.light.intensity)"
+                  class="mini-num-input intensity-num-input"
+                />
+              </div>
+              <div class="range-presets-row">
+                <span class="range-hint">End bound:</span>
+                <div class="preset-badges">
+                  <button
+                    v-for="r in [5, 10, 25, 50, 100]"
+                    :key="r"
+                    type="button"
+                    class="bound-pill"
+                    :class="{ active: lightMaxRange === r }"
+                    @click="lightMaxRange = r"
+                  >
+                    {{ r }}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -929,6 +959,105 @@ function applyShaders() {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-bright);
+}
+
+.intensity-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.intensity-value-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(251, 191, 36, 0.25);
+}
+
+.intensity-slider-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.slider-track-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.bound-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  min-width: 18px;
+  text-align: center;
+}
+
+.intensity-range {
+  flex: 1;
+  accent-color: #f59e0b;
+}
+
+.intensity-num-input {
+  width: 58px;
+}
+
+.range-presets-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.07);
+}
+
+.range-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.preset-badges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bound-pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bound-pill:hover {
+  color: var(--text-bright);
+  border-color: #f59e0b;
+}
+
+.bound-pill.active {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border-color: #f59e0b;
+  font-weight: 700;
 }
 
 .range-slider {
