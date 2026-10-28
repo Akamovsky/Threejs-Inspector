@@ -17,6 +17,19 @@ export interface GeometryInfo {
   hasUVs: boolean;
   hasColors: boolean;
   parameters?: Record<string, any>;
+  memoryBytes?: number;
+}
+
+export interface TextureSlotInfo {
+  slot: string;
+  uuid: string;
+  name: string;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
+  format?: string;
+  mapping?: string;
+  memoryBytes?: number;
 }
 
 export interface MaterialInfo {
@@ -33,6 +46,11 @@ export interface MaterialInfo {
   visible: boolean;
   depthTest?: boolean;
   depthWrite?: boolean;
+  textures?: TextureSlotInfo[];
+  isShaderMaterial?: boolean;
+  vertexShader?: string;
+  fragmentShader?: string;
+  customUniforms?: Record<string, any>;
 }
 
 export interface LightInfo {
@@ -146,6 +164,8 @@ export interface CategoryTextureItem {
   height?: number;
   format?: string;
   mapping?: string;
+  dataUrl?: string;
+  memoryBytes?: number;
   linkedObjectUuids: string[];
 }
 
@@ -155,6 +175,7 @@ export interface CategoryGeometryItem {
   type: string;
   verticesCount: number;
   facesCount: number;
+  memoryBytes?: number;
   linkedObjectUuids: string[];
 }
 
@@ -165,4 +186,50 @@ export interface CategorizedSceneData {
   materials: CategoryMaterialItem[];
   textures: CategoryTextureItem[];
   geometries: CategoryGeometryItem[];
+}
+
+// Memory & Resource Auditing
+export interface AuditedResourceItem {
+  uuid: string;
+  name: string;
+  type: 'texture' | 'geometry';
+  memoryBytes: number;
+  memoryMB: number;
+  inScene: boolean;
+  details: string;
+}
+
+export interface MemoryAuditData {
+  totalVramMB: number;
+  texturesVramMB: number;
+  geometriesVramMB: number;
+  orphansCount: number;
+  resources: AuditedResourceItem[];
+}
+
+// Animation
+export interface AnimationClipInfo {
+  name: string;
+  duration: number;
+  tracksCount: number;
+  isPlaying: boolean;
+  time: number;
+  speed: number;
+}
+
+export interface AnimationMixerInfo {
+  id: string;
+  rootUuid: string;
+  rootName: string;
+  clips: AnimationClipInfo[];
+}
+
+// Session Edits / Diff Record
+export interface SessionEditRecord {
+  id: string;
+  timestamp: number;
+  uuid: string;
+  objectName: string;
+  path: string;
+  value: any;
 }

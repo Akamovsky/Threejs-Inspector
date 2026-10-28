@@ -3,7 +3,10 @@ import type {
   SerializedNode,
   ObjectDetails,
   RendererStats,
-  CategorizedSceneData
+  CategorizedSceneData,
+  MemoryAuditData,
+  AnimationMixerInfo,
+  SessionEditRecord
 } from '../types/three-data';
 import {
   MESSAGE_SOURCE,
@@ -24,6 +27,18 @@ export const state = reactive({
   pickerActive: false,
   pointerLockBypassed: false,
   scenePaused: false,
+  debugCameraActive: false,
+  gizmoMode: 'none' as 'translate' | 'rotate' | 'scale' | 'none',
+  renderOverride: 'default' as 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit',
+  helpers: {
+    grid: false,
+    axes: false,
+    lights: false,
+    cameras: false
+  },
+  memoryAudit: null as MemoryAuditData | null,
+  animations: [] as AnimationMixerInfo[],
+  sessionEdits: [] as SessionEditRecord[],
   lockedTransformUuids: new Set<string>(),
   filterQuery: '',
   statusMessage: 'Waiting for Three.js scene...'
@@ -64,7 +79,6 @@ export function initBridge() {
       setTimeout(initBridge, 1000);
     });
 
-    // Request initial data via port and direct eval
     send('REQUEST_SCENE_GRAPH');
     refresh();
   } catch (e) {
@@ -119,6 +133,32 @@ function handleMessage(message: InspectorMessage) {
         state.stats = message.payload;
       }
       break;
+
+    case 'MEMORY_AUDIT_DATA':
+      if (message.payload) {
+        state.memoryAudit = message.payload;
+      }
+      break;
+
+    case 'ANIMATION_DATA':
+      if (message.payload) {
+        state.animations = message.payload;
+      }
+      break;
+
+    case 'TRANSFORM_GIZMO_UPDATED':
+      if (message.payload && state.selectedObject && state.selectedObject.uuid === message.payload.uuid) {
+        state.selectedObject.position = message.payload.position;
+        state.selectedObject.rotationDegrees = message.payload.rotationDegrees;
+        state.selectedObject.scale = message.payload.scale;
+
+        logSessionEdit(message.payload.uuid, state.selectedObject.name, 'transform', {
+          position: message.payload.position,
+          rotation: message.payload.rotationDegrees,
+          scale: message.payload.scale
+        });
+      }
+      break;
   }
 }
 
@@ -138,10 +178,23 @@ export function send(action: ActionType, payload?: any) {
   }
 }
 
+export function logSessionEdit(uuid: string, objectName: string, path: string, value: any) {
+  state.sessionEdits.unshift({
+    id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: Date.now(),
+    uuid,
+    objectName,
+    path,
+    value
+  });
+  if (state.sessionEdits.length > 200) {
+    state.sessionEdits.pop();
+  }
+}
+
 export function selectObject(uuid: string) {
   state.selectedUuid = uuid;
 
-  // Direct page eval: instantly gets details and sets highlight
   const script = `
     (function() {
       if (window.__THREE_INSPECTOR__) {
@@ -170,7 +223,11 @@ export function highlightObject(uuid: string | null) {
 }
 
 export function updateProperty(uuid: string, path: string[], value: any) {
-  // Direct page eval: modifies property in Three.js object instantly!
+  const propKey = path.join('.');
+  if (state.selectedObject) {
+    logSessionEdit(uuid, state.selectedObject.name, propKey, value);
+  }
+
   const script = `
     if (window.__THREE_INSPECTOR__) {
       window.__THREE_INSPECTOR__.updateProperty(${JSON.stringify(uuid)}, ${JSON.stringify(path)}, ${JSON.stringify(value)});
@@ -178,6 +235,227 @@ export function updateProperty(uuid: string, path: string[], value: any) {
   `;
   executeInPage(script);
   send('UPDATE_PROPERTY', { uuid, path, value });
+}
+
+export function setGizmoMode(mode: 'translate' | 'rotate' | 'scale' | 'none') {
+  state.gizmoMode = mode;
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.setGizmoMode(${JSON.stringify(mode)});
+    }
+  `;
+  executeInPage(script);
+  send('SET_GIZMO_MODE', { mode });
+}
+
+export function focusObject(uuid?: string) {
+  const targetUuid = uuid || state.selectedUuid;
+  if (!targetUuid) return;
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.focusObject(${JSON.stringify(targetUuid)});
+    }
+  `;
+  executeInPage(script);
+  send('FOCUS_OBJECT', { uuid: targetUuid });
+}
+
+export function toggleDebugCamera() {
+  const script = `
+    (function() {
+      if (window.__THREE_INSPECTOR__) {
+        return window.__THREE_INSPECTOR__.toggleDebugCamera();
+      }
+      return false;
+    })()
+  `;
+  executeInPage(script, (active) => {
+    state.debugCameraActive = Boolean(active);
+  });
+  send('TOGGLE_DEBUG_CAMERA');
+}
+
+export function toggleHelper(helperType: 'grid' | 'axes' | 'lights' | 'cameras') {
+  state.helpers[helperType] = !state.helpers[helperType];
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.setHelpers(${JSON.stringify(state.helpers)});
+    }
+  `;
+  executeInPage(script);
+}
+
+export function setRenderOverride(mode: 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit') {
+  state.renderOverride = mode;
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.setRenderOverride(${JSON.stringify(mode)});
+    }
+  `;
+  executeInPage(script);
+  send('SET_RENDER_OVERRIDE', { mode });
+}
+
+export function togglePauseSimulation() {
+  state.scenePaused = !state.scenePaused;
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.togglePauseSimulation(${state.scenePaused});
+    }
+  `;
+  executeInPage(script);
+  send('TOGGLE_PAUSE_SCENE', { enabled: state.scenePaused });
+}
+
+export function stepSimulationFrame() {
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.stepSimulationFrame();
+    }
+  `;
+  executeInPage(script);
+  send('STEP_SIMULATION_FRAME');
+}
+
+export function spawnPrimitive(type: 'box' | 'sphere' | 'plane' | 'cylinder' | 'directionalLight' | 'pointLight' | 'ambientLight' | 'group') {
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.spawnPrimitive(${JSON.stringify(type)});
+    }
+  `;
+  executeInPage(script);
+  send('SPAWN_PRIMITIVE', { type });
+}
+
+export function exportGLTF(uuid?: string) {
+  const targetUuid = uuid || state.selectedUuid;
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.exportGLTF(${JSON.stringify(targetUuid || null)});
+    }
+  `;
+  executeInPage(script);
+  send('EXPORT_GLTF', { uuid: targetUuid });
+}
+
+export function captureScreenshot() {
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.captureScreenshot();
+    }
+  `;
+  executeInPage(script);
+  send('CAPTURE_SCREENSHOT');
+}
+
+export function downloadTexture(uuid: string) {
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.downloadTexture(${JSON.stringify(uuid)});
+    }
+  `;
+  executeInPage(script);
+}
+
+export function requestMemoryAudit() {
+  const script = `
+    (function() {
+      if (window.__THREE_INSPECTOR__) {
+        return window.__THREE_INSPECTOR__.getMemoryAudit();
+      }
+      return null;
+    })()
+  `;
+  executeInPage(script, (data) => {
+    if (data) state.memoryAudit = data;
+  });
+  send('REQUEST_MEMORY_AUDIT');
+}
+
+export function disposeResource(uuid: string, type: 'geometry' | 'texture') {
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.disposeResource(${JSON.stringify(uuid)}, ${JSON.stringify(type)});
+    }
+  `;
+  executeInPage(script);
+  send('DISPOSE_RESOURCE', { uuid, type });
+  requestMemoryAudit();
+}
+
+export function requestAnimations() {
+  const script = `
+    (function() {
+      if (window.__THREE_INSPECTOR__) {
+        return window.__THREE_INSPECTOR__.getAnimations();
+      }
+      return [];
+    })()
+  `;
+  executeInPage(script, (data) => {
+    if (Array.isArray(data)) state.animations = data;
+  });
+  send('REQUEST_ANIMATIONS');
+}
+
+export function controlAnimation(mixerId: string, clipName: string, action: 'play' | 'pause' | 'stop' | 'seek' | 'speed', value?: number) {
+  const script = `
+    if (window.__THREE_INSPECTOR__) {
+      window.__THREE_INSPECTOR__.controlAnimation(${JSON.stringify(mixerId)}, ${JSON.stringify(clipName)}, ${JSON.stringify(action)}, ${JSON.stringify(value)});
+    }
+  `;
+  executeInPage(script);
+  send('CONTROL_ANIMATION', { mixerId, clipName, action, value });
+}
+
+export function exportEditsJSON() {
+  const diffObject: Record<string, any> = {};
+  state.sessionEdits.forEach((edit) => {
+    if (!diffObject[edit.objectName]) {
+      diffObject[edit.objectName] = { uuid: edit.uuid, changes: {} };
+    }
+    diffObject[edit.objectName].changes[edit.path] = edit.value;
+  });
+
+  const blob = new Blob([JSON.stringify(diffObject, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `threejs-edits-${Date.now()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+export function copyThreeCode(obj: ObjectDetails) {
+  if (!obj) return;
+  const lines: string[] = [
+    `// Three.js code for: ${obj.name}`,
+    `const obj = scene.getObjectByProperty('uuid', '${obj.uuid}');`,
+    `if (obj) {`,
+    `  obj.position.set(${obj.position.x}, ${obj.position.y}, ${obj.position.z});`,
+    `  obj.rotation.set(${obj.rotation.x}, ${obj.rotation.y}, ${obj.rotation.z});`,
+    `  obj.scale.set(${obj.scale.x}, ${obj.scale.y}, ${obj.scale.z});`,
+    `  obj.visible = ${obj.visible};`
+  ];
+
+  if (obj.light) {
+    lines.push(`  obj.intensity = ${obj.light.intensity};`);
+    lines.push(`  obj.color.set('${obj.light.color}');`);
+  }
+
+  if (obj.material && !Array.isArray(obj.material)) {
+    if (obj.material.color) lines.push(`  obj.material.color.set('${obj.material.color}');`);
+    lines.push(`  obj.material.wireframe = ${Boolean(obj.material.wireframe)};`);
+    lines.push(`  obj.material.opacity = ${obj.material.opacity};`);
+  }
+
+  lines.push(`}`);
+  const code = lines.join('\n');
+  navigator.clipboard.writeText(code);
 }
 
 export function inspectInConsole(uuid: string) {
@@ -212,7 +490,6 @@ export function togglePicker() {
   executeInPage(script);
   send('TOGGLE_PICKER', { enabled: state.pickerActive });
 
-  // Poll for picked object while picker is active to ensure instant selection
   if (state.pickerActive) {
     if (pickerPollTimer) clearInterval(pickerPollTimer);
     pickerPollTimer = setInterval(() => {
@@ -252,22 +529,6 @@ export function togglePointerLockBypass() {
   `;
   executeInPage(script);
   send('TOGGLE_POINTER_LOCK_BYPASS', { enabled: state.pointerLockBypassed });
-}
-
-export function togglePauseScene() {
-  state.scenePaused = !state.scenePaused;
-  send('TOGGLE_PAUSE_SCENE', { enabled: state.scenePaused });
-}
-
-export function toggleLockTransform(uuid: string, position?: { x: number; y: number; z: number }) {
-  const isLocked = state.lockedTransformUuids.has(uuid);
-  if (isLocked) {
-    state.lockedTransformUuids.delete(uuid);
-    send('LOCK_TRANSFORM', { uuid, enabled: false });
-  } else {
-    state.lockedTransformUuids.add(uuid);
-    send('LOCK_TRANSFORM', { uuid, enabled: true, position });
-  }
 }
 
 export function resetPropertyOverrides(uuid: string) {

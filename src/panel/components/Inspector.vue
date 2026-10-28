@@ -1,6 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { state, updateProperty, inspectInConsole, toggleLockTransform, resetPropertyOverrides } from '../bridge';
+import { ref, computed } from 'vue';
+import {
+  state,
+  updateProperty,
+  inspectInConsole,
+  resetPropertyOverrides,
+  setGizmoMode,
+  focusObject,
+  exportGLTF,
+  copyThreeCode,
+  downloadTexture
+} from '../bridge';
 import {
   Terminal,
   Move,
@@ -12,11 +22,19 @@ import {
   Sun,
   Camera as CameraIcon,
   Info,
-  Lock,
-  Unlock
+  Crosshair,
+  Copy,
+  Download,
+  Code,
+  Check,
+  Image as ImageIcon
 } from 'lucide-vue-next';
 
 const obj = computed(() => state.selectedObject);
+const copiedCode = ref(false);
+const activeMaterialTab = ref<'properties' | 'shader'>('properties');
+const editedVertexShader = ref('');
+const editedFragmentShader = ref('');
 
 function update(path: string[], value: any) {
   if (!obj.value) return;
@@ -28,7 +46,13 @@ function handleConsoleLog() {
   inspectInConsole(obj.value.uuid);
 }
 
-// Ensure single material access
+function handleCopyCode() {
+  if (!obj.value) return;
+  copyThreeCode(obj.value);
+  copiedCode.value = true;
+  setTimeout(() => (copiedCode.value = false), 2000);
+}
+
 const activeMaterial = computed(() => {
   if (!obj.value?.material) return null;
   if (Array.isArray(obj.value.material)) {
@@ -36,6 +60,16 @@ const activeMaterial = computed(() => {
   }
   return obj.value.material;
 });
+
+function applyShaders() {
+  if (!obj.value || !activeMaterial.value) return;
+  if (editedVertexShader.value) {
+    update(['material', 'vertexShader'], editedVertexShader.value);
+  }
+  if (editedFragmentShader.value) {
+    update(['material', 'fragmentShader'], editedFragmentShader.value);
+  }
+}
 </script>
 
 <template>
@@ -46,15 +80,38 @@ const activeMaterial = computed(() => {
     </div>
 
     <div v-else class="inspector-content">
-      <!-- Header / Summary -->
+      <!-- Header / Summary with Actions -->
       <div class="inspector-header">
         <div class="title-row">
           <span class="obj-name">{{ obj.name }}</span>
-          <button class="console-btn" @click="handleConsoleLog" title="Expose to console as $three">
-            <Terminal :size="12" />
-            $three
-          </button>
+          <div class="header-tools">
+            <!-- Focus in 3D -->
+            <button class="tool-btn" @click="focusObject(obj.uuid)" title="Focus Camera on Object (F)">
+              <Crosshair :size="12" />
+              <span>Focus</span>
+            </button>
+
+            <!-- Copy Three.js Code -->
+            <button class="tool-btn" @click="handleCopyCode" title="Copy Three.js Code Snippet">
+              <Check v-if="copiedCode" :size="12" style="color: #4ade80" />
+              <Copy v-else :size="12" />
+              <span>{{ copiedCode ? 'Copied!' : 'Code' }}</span>
+            </button>
+
+            <!-- Export Object to GLB -->
+            <button class="tool-btn" @click="exportGLTF(obj.uuid)" title="Export Object as GLB">
+              <Download :size="12" />
+              <span>GLB</span>
+            </button>
+
+            <!-- Console $three -->
+            <button class="tool-btn console-btn" @click="handleConsoleLog" title="Expose to console as $three">
+              <Terminal :size="12" />
+              <span>$three</span>
+            </button>
+          </div>
         </div>
+
         <div class="meta-row">
           <span class="meta-badge type">{{ obj.type }}</span>
           <span class="meta-badge uuid" :title="obj.uuid">UUID: {{ obj.uuid.slice(0, 8) }}...</span>
@@ -62,12 +119,12 @@ const activeMaterial = computed(() => {
         </div>
       </div>
 
-      <!-- Transform Card -->
+      <!-- Transform Card + Interactive 3D Gizmo Controls -->
       <div class="section-card">
         <div class="section-title transform-title">
           <div class="title-left">
             <Move :size="13" class="section-icon" />
-            Transform
+            Transform & Gizmo
           </div>
           <div class="title-actions">
             <button
@@ -79,6 +136,46 @@ const activeMaterial = computed(() => {
               <span>Reset</span>
             </button>
           </div>
+        </div>
+
+        <!-- 3D Transform Gizmo Mode Selector -->
+        <div class="gizmo-mode-selector">
+          <span class="gizmo-label">3D Gizmo:</span>
+          <button
+            class="gizmo-btn"
+            :class="{ active: state.gizmoMode === 'none' }"
+            @click="setGizmoMode('none')"
+            title="Disable 3D Gizmo"
+          >
+            Off
+          </button>
+          <button
+            class="gizmo-btn"
+            :class="{ active: state.gizmoMode === 'translate' }"
+            @click="setGizmoMode('translate')"
+            title="Translate Gizmo (W)"
+          >
+            <Move :size="11" />
+            Translate
+          </button>
+          <button
+            class="gizmo-btn"
+            :class="{ active: state.gizmoMode === 'rotate' }"
+            @click="setGizmoMode('rotate')"
+            title="Rotate Gizmo (E)"
+          >
+            <RotateCw :size="11" />
+            Rotate
+          </button>
+          <button
+            class="gizmo-btn"
+            :class="{ active: state.gizmoMode === 'scale' }"
+            @click="setGizmoMode('scale')"
+            title="Scale Gizmo (R)"
+          >
+            <Maximize2 :size="11" />
+            Scale
+          </button>
         </div>
 
         <div class="fields-grid">
@@ -253,14 +350,35 @@ const activeMaterial = computed(() => {
         </div>
       </div>
 
-      <!-- Material Card -->
+      <!-- Material Card + Texture Thumbnails + Shader Editor -->
       <div v-if="activeMaterial" class="section-card">
-        <div class="section-title">
-          <Palette :size="13" class="section-icon" />
-          Material ({{ activeMaterial.type }})
+        <div class="material-card-header">
+          <div class="section-title" style="margin-bottom: 0">
+            <Palette :size="13" class="section-icon" />
+            Material ({{ activeMaterial.type }})
+          </div>
+          <div class="mat-tab-toggle">
+            <button
+              class="mat-tab-btn"
+              :class="{ active: activeMaterialTab === 'properties' }"
+              @click="activeMaterialTab = 'properties'"
+            >
+              Properties
+            </button>
+            <button
+              v-if="activeMaterial.isShaderMaterial || activeMaterial.vertexShader"
+              class="mat-tab-btn"
+              :class="{ active: activeMaterialTab === 'shader' }"
+              @click="activeMaterialTab = 'shader'"
+            >
+              <Code :size="10" />
+              Shaders
+            </button>
+          </div>
         </div>
 
-        <div class="fields-grid">
+        <!-- Material Properties Tab -->
+        <div v-show="activeMaterialTab === 'properties'" class="fields-grid" style="margin-top: 8px">
           <!-- Color -->
           <div v-if="activeMaterial.color" class="field-row">
             <span class="field-label">Color</span>
@@ -325,6 +443,52 @@ const activeMaterial = computed(() => {
               class="range-slider"
             />
           </div>
+
+          <!-- Textures Previews Row -->
+          <div v-if="activeMaterial.textures && activeMaterial.textures.length > 0" class="textures-section">
+            <span class="textures-label">Attached Textures ({{ activeMaterial.textures.length }})</span>
+            <div class="texture-slots-grid">
+              <div v-for="tex in activeMaterial.textures" :key="tex.slot" class="tex-slot-card">
+                <div class="tex-thumb-box">
+                  <img v-if="tex.dataUrl" :src="tex.dataUrl" class="tex-thumb-img" />
+                  <ImageIcon v-else :size="16" class="tex-empty-icon" />
+                </div>
+                <div class="tex-details">
+                  <span class="slot-name">{{ tex.slot }}</span>
+                  <span class="slot-res">{{ tex.width }}x{{ tex.height }}</span>
+                  <button class="tex-dl-btn" @click="downloadTexture(tex.uuid)" title="Download PNG">
+                    <Download :size="9" />
+                    PNG
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live GLSL Shader Editor Tab -->
+        <div v-show="activeMaterialTab === 'shader'" class="shader-editor-container" style="margin-top: 8px">
+          <div class="shader-section">
+            <span class="shader-title">Vertex Shader</span>
+            <textarea
+              class="glsl-textarea"
+              rows="6"
+              :placeholder="activeMaterial.vertexShader || '// Default vertex shader'"
+              v-model="editedVertexShader"
+            ></textarea>
+          </div>
+          <div class="shader-section">
+            <span class="shader-title">Fragment Shader</span>
+            <textarea
+              class="glsl-textarea"
+              rows="6"
+              :placeholder="activeMaterial.fragmentShader || '// Default fragment shader'"
+              v-model="editedFragmentShader"
+            ></textarea>
+          </div>
+          <button class="apply-shader-btn" @click="applyShaders">
+            Apply Shaders Live
+          </button>
         </div>
       </div>
 
@@ -456,7 +620,7 @@ const activeMaterial = computed(() => {
 }
 
 .inspector-header {
-  padding: 8px;
+  padding: 8px 10px;
   background: var(--bg-secondary);
   border-radius: 4px;
   border: 1px solid var(--border-color);
@@ -475,10 +639,33 @@ const activeMaterial = computed(() => {
   color: var(--text-bright);
 }
 
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.tool-btn:hover {
+  background: var(--bg-hover);
+  color: #38bdf8;
+  border-color: #38bdf8;
+}
+
 .console-btn {
-  background: var(--bg-tertiary);
   font-family: var(--font-mono);
-  font-size: 11px;
 }
 
 .meta-row {
@@ -492,7 +679,7 @@ const activeMaterial = computed(() => {
   padding: 2px 6px;
   border-radius: 3px;
   font-family: var(--font-mono);
-  background: var(--bg-tertiary);
+  background: var(--bg-primary);
   color: var(--text-muted);
 }
 
@@ -518,129 +705,10 @@ const activeMaterial = computed(() => {
   letter-spacing: 0.5px;
   color: var(--text-muted);
   margin-bottom: 8px;
-  border-bottom: 1px solid var(--border-subtle);
-  padding-bottom: 4px;
-}
-
-.section-icon {
-  color: var(--text-accent);
-}
-
-.fields-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.field-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.field-label {
-  font-size: 11px;
-  color: var(--text-primary);
-  flex-shrink: 0;
-  width: 100px;
-}
-
-.xyz-group {
-  display: flex;
-  gap: 4px;
-  flex: 1;
-}
-
-.axis-input {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.axis-tag {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 4px;
-}
-
-.axis-input.x .axis-tag { color: #f87171; }
-.axis-input.y .axis-tag { color: #4ade80; }
-.axis-input.z .axis-tag { color: #60a5fa; }
-
-.axis-input input {
-  width: 100%;
-  border: none;
-  background: transparent;
-  padding: 2px 4px;
-}
-
-.flags-row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.flag-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.stats-mini-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-}
-
-.stat-mini {
-  background: var(--bg-primary);
-  padding: 4px 6px;
-  border-radius: 3px;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-subtle);
-}
-
-.stat-mini-label {
-  font-size: 9.5px;
-  color: var(--text-muted);
-}
-
-.stat-mini-val {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-bright);
-}
-
-.color-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.color-hex {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.range-slider {
-  flex: 1;
-  accent-color: var(--accent);
 }
 
 .transform-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between !important;
+  justify-content: space-between;
 }
 
 .title-left {
@@ -649,18 +717,45 @@ const activeMaterial = computed(() => {
   gap: 6px;
 }
 
-.lock-btn {
+.gizmo-mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 4px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.gizmo-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.gizmo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 2px 6px;
   font-size: 10px;
   border-radius: 3px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  border: none;
+  background: transparent;
   color: var(--text-muted);
   cursor: pointer;
 }
 
-.lock-btn:hover {
+.gizmo-btn:hover {
+  background: var(--bg-secondary);
   color: var(--text-bright);
+}
+
+.gizmo-btn.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  font-weight: 600;
 }
 
 .reset-btn {
@@ -682,21 +777,311 @@ const activeMaterial = computed(() => {
   border-color: #38bdf8;
 }
 
-.lock-btn.active {
-  background: #b91c1c;
-  color: #ffffff;
-  border-color: #ef4444;
+.fields-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.field-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 80px;
+}
+
+.xyz-group {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.axis-input {
+  display: flex;
+  align-items: center;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.axis-tag {
+  font-size: 10px;
+  font-weight: bold;
+  padding: 2px 4px;
+  font-family: var(--font-mono);
+}
+
+.axis-input.x .axis-tag { color: #f87171; }
+.axis-input.y .axis-tag { color: #4ade80; }
+.axis-input.z .axis-tag { color: #38bdf8; }
+
+.axis-input input,
+.xyz-group input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text-bright);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 4px;
+  outline: none;
+}
+
+.flags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.flag-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.stats-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.stat-mini {
+  background: var(--bg-primary);
+  padding: 4px;
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-mini-label {
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+.stat-mini-val {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.material-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mat-tab-toggle {
+  display: flex;
+  gap: 3px;
+}
+
+.mat-tab-btn {
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mat-tab-btn.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  border-color: #38bdf8;
+}
+
+.color-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.color-field input[type="color"] {
+  border: none;
+  background: transparent;
+  width: 24px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.color-hex {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-bright);
+}
+
+.range-slider {
+  flex: 1;
+  accent-color: #38bdf8;
 }
 
 .slider-with-input {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
 }
 
 .mini-num-input {
   width: 50px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-bright);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 4px;
   text-align: right;
+}
+
+.textures-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.textures-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.texture-slots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 6px;
+}
+
+.tex-slot-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tex-thumb-box {
+  width: 28px;
+  height: 28px;
+  background: #141416;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.tex-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tex-empty-icon {
+  opacity: 0.3;
+}
+
+.tex-details {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.slot-name {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.slot-res {
+  font-size: 8.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.tex-dl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 8px;
+  padding: 1px 3px;
+  border-radius: 2px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.tex-dl-btn:hover {
+  color: #38bdf8;
+  border-color: #38bdf8;
+}
+
+.shader-editor-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shader-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shader-title {
+  font-size: 9.5px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.glsl-textarea {
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: #4ade80;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 4px;
+  resize: vertical;
+  outline: none;
+}
+
+.apply-shader-btn {
+  background: #38bdf8;
+  color: #000;
+  font-weight: 600;
+  font-size: 10.5px;
+  border: none;
+  border-radius: 3px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.apply-shader-btn:hover {
+  background: #7dd3fc;
 }
 </style>

@@ -320,6 +320,7 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
               @mouseenter="tex.linkedObjectUuids[0] && handleHover(tex.linkedObjectUuids[0])"
               @mouseleave="handleHover(null)"
             >
+              <img v-if="tex.dataUrl" :src="tex.dataUrl" class="cat-tex-thumb" />
               <span class="item-name" :title="tex.name">{{ tex.name }}</span>
               <span class="type-badge">{{ tex.type }}</span>
               <span v-if="tex.width && tex.height" class="res-badge">
@@ -512,6 +513,15 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cat-tex-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
 }
 
 .geo-badge,

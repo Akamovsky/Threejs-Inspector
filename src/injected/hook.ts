@@ -5,13 +5,27 @@ import {
   Box3Helper,
   Vector2,
   Vector3,
-  Color
+  Color,
+  MeshNormalMaterial,
+  MeshDepthMaterial,
+  MeshBasicMaterial,
+  BoxGeometry,
+  SphereGeometry,
+  PlaneGeometry,
+  CylinderGeometry,
+  MeshStandardMaterial,
+  Mesh,
+  DirectionalLight,
+  PointLight,
+  AmbientLight,
+  Group
 } from 'three';
 import type {
   SerializedNode,
   ObjectDetails,
   GeometryInfo,
   MaterialInfo,
+  TextureSlotInfo,
   LightInfo,
   CameraInfo,
   RendererStats,
@@ -28,6 +42,11 @@ import {
   type InspectorMessage,
   type UpdatePropertyPayload
 } from '../types/messages';
+import { GizmoManager, type GizmoMode, type HelperOptions } from './gizmo';
+import { DebugCameraManager } from './debug-camera';
+import { ExporterManager } from './exporter';
+import { MemoryAuditor } from './memory-audit';
+import { AnimationManager } from './animations';
 
 (function initThreeInspectorHook() {
   if ((window as any).__THREE_INSPECTOR_HOOK_INSTALLED__) {
@@ -39,6 +58,13 @@ import {
   const registeredScenes = new Set<any>();
   const registeredRenderers = new Set<any>();
   const uuidToObjectMap = new Map<string, any>();
+  const allKnownGeometries = new Map<string, any>();
+  const allKnownTextures = new Map<string, any>();
+
+  // Managers
+  const gizmoManager = new GizmoManager();
+  const debugCameraManager = new DebugCameraManager();
+  const animationManager = new AnimationManager();
 
   // Helper and Selection State
   let currentHighlightHelper: any = null;
@@ -48,8 +74,50 @@ import {
   let pickerEnabled = false;
   let bypassPointerLock = false;
 
+  // Render overrides
+  let currentRenderOverride: 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit' = 'default';
+  const overrideNormals = new MeshNormalMaterial();
+  const overrideDepth = new MeshDepthMaterial();
+  const overrideUnlit = new MeshBasicMaterial({ color: 0xdddddd });
+
+  // Simulation Pause & Step
+  let simulationPaused = false;
+  let stepOneFrame = false;
+
+  // Helper options
+  const helperSettings: HelperOptions = {
+    grid: false,
+    axes: false,
+    lights: false,
+    cameras: false
+  };
+
   // Persistent property overrides (prevent game loops / animations from reverting user edits)
   const pinnedOverrides = new Map<string, Record<string, any>>();
+
+  gizmoManager.setOnTransformChange((obj: any) => {
+    if (!obj || !obj.uuid) return;
+    pinProperty(obj, 'position.x', obj.position.x);
+    pinProperty(obj, 'position.y', obj.position.y);
+    pinProperty(obj, 'position.z', obj.position.z);
+    pinProperty(obj, 'rotationDegrees.x', (obj.rotation.x * 180) / Math.PI);
+    pinProperty(obj, 'rotationDegrees.y', (obj.rotation.y * 180) / Math.PI);
+    pinProperty(obj, 'rotationDegrees.z', (obj.rotation.z * 180) / Math.PI);
+    pinProperty(obj, 'scale.x', obj.scale.x);
+    pinProperty(obj, 'scale.y', obj.scale.y);
+    pinProperty(obj, 'scale.z', obj.scale.z);
+
+    emit('TRANSFORM_GIZMO_UPDATED', {
+      uuid: obj.uuid,
+      position: { x: +obj.position.x.toFixed(3), y: +obj.position.y.toFixed(3), z: +obj.position.z.toFixed(3) },
+      rotationDegrees: {
+        x: +((obj.rotation.x * 180) / Math.PI).toFixed(2),
+        y: +((obj.rotation.y * 180) / Math.PI).toFixed(2),
+        z: +((obj.rotation.z * 180) / Math.PI).toFixed(2)
+      },
+      scale: { x: +obj.scale.x.toFixed(3), y: +obj.scale.y.toFixed(3), z: +obj.scale.z.toFixed(3) }
+    });
+  });
 
   function pinProperty(obj: any, propPath: string, value: any) {
     if (!obj || !obj.uuid) return;
@@ -60,7 +128,6 @@ import {
     }
     overrides[propPath] = value;
 
-    // Hard override getters/setters so game loop setters cannot clobber the user's values
     if (propPath === 'light.intensity') {
       let currentVal = Number(value);
       obj.__inspector_intensity = currentVal;
@@ -161,13 +228,11 @@ import {
     }
   }
 
-  // FPS calculation
   let frameCount = 0;
   let lastTime = performance.now();
   let currentFps = 60;
   let lastStatsEmit = 0;
 
-  // Post message to content script
   function emit<T>(action: InspectorMessage['action'], payload?: T) {
     const message: InspectorMessage<T> = {
       source: MESSAGE_SOURCE.HOOK,
@@ -178,14 +243,13 @@ import {
     window.postMessage(message, '*');
   }
 
-  // Hook all pointer lock entry points
   function hookPointerLock() {
     const patchObj = (proto: any) => {
       if (!proto || !proto.requestPointerLock || proto.__INSPECTOR_PL_HOOKED__) return;
       proto.__INSPECTOR_PL_HOOKED__ = true;
       const orig = proto.requestPointerLock;
       proto.requestPointerLock = function () {
-        if (pickerEnabled || bypassPointerLock) {
+        if (pickerEnabled || bypassPointerLock || gizmoManager.getMode() !== 'none') {
           if (document.pointerLockElement) {
             try {
               document.exitPointerLock();
@@ -205,7 +269,6 @@ import {
   }
   hookPointerLock();
 
-  // Color helper: Three.js Color -> Hex string
   function colorToHex(color: any): string {
     if (!color) return '#ffffff';
     if (typeof color.getHexString === 'function') {
@@ -215,14 +278,12 @@ import {
     return '#ffffff';
   }
 
-  // Hex string -> Three.js Color
   function hexToColor(targetColor: any, hex: string) {
     if (targetColor && typeof targetColor.set === 'function') {
       targetColor.set(hex);
     }
   }
 
-  // Find object by UUID reliably across all scenes
   function findObjectByUuid(uuid: string): any {
     if (uuidToObjectMap.has(uuid)) {
       return uuidToObjectMap.get(uuid);
@@ -240,20 +301,21 @@ import {
     return null;
   }
 
-  // Find active camera
   function getActiveCamera(): any {
-    if (lastActiveCamera) return lastActiveCamera;
-    for (const scene of registeredScenes) {
-      let cam: any = null;
-      scene.traverse((o: any) => {
-        if (o && o.isCamera && !cam) cam = o;
-      });
-      if (cam) return cam;
-    }
-    return null;
+    const fallback = (() => {
+      if (lastActiveCamera) return lastActiveCamera;
+      for (const scene of registeredScenes) {
+        let cam: any = null;
+        scene.traverse((o: any) => {
+          if (o && o.isCamera && !o.__isInspectorCamera && !cam) cam = o;
+        });
+        if (cam) return cam;
+      }
+      return null;
+    })();
+    return debugCameraManager.getCamera(fallback);
   }
 
-  // Find active canvas
   function getActiveCanvas(): HTMLCanvasElement | null {
     for (const r of registeredRenderers) {
       if (r && r.domElement) return r.domElement;
@@ -261,7 +323,13 @@ import {
     return document.querySelector('canvas');
   }
 
-  // Register scene and index its objects
+  function getActiveScene(): any {
+    for (const s of registeredScenes) {
+      return s;
+    }
+    return null;
+  }
+
   function registerScene(scene: any) {
     if (!scene || !scene.isObject3D) return;
     if (!registeredScenes.has(scene)) {
@@ -272,16 +340,29 @@ import {
     }
   }
 
-  // Index objects for fast UUID lookup
   function indexSceneObjects(root: any) {
     root.traverse((obj: any) => {
       if (obj && obj.uuid) {
         uuidToObjectMap.set(obj.uuid, obj);
       }
+      if (obj?.geometry && obj.geometry.uuid) {
+        allKnownGeometries.set(obj.geometry.uuid, obj.geometry);
+      }
+      if (obj?.material) {
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach((m: any) => {
+          const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
+          slots.forEach((s) => {
+            const tex = m[s];
+            if (tex && tex.isTexture && tex.uuid) {
+              allKnownTextures.set(tex.uuid, tex);
+            }
+          });
+        });
+      }
     });
   }
 
-  // Register renderer and hook its render method
   function registerRenderer(renderer: any) {
     if (!renderer) return;
     if (!registeredRenderers.has(renderer)) {
@@ -291,7 +372,6 @@ import {
     }
   }
 
-  // Hook individual renderer instance
   function hookRendererInstance(renderer: any) {
     if (!renderer || renderer.__INSPECTOR_RENDER_HOOKED__) return;
     renderer.__INSPECTOR_RENDER_HOOKED__ = true;
@@ -299,19 +379,40 @@ import {
     const originalRender = renderer.render;
     renderer.render = function (scene: any, camera: any) {
       if (scene) registerScene(scene);
-      if (camera) lastActiveCamera = camera;
+      if (camera && !camera.__isInspectorCamera) lastActiveCamera = camera;
       registerRenderer(this);
 
-      // Force pinned property overrides right before frame render
+      if (simulationPaused && !stepOneFrame) {
+        return;
+      }
+      if (stepOneFrame) {
+        stepOneFrame = false;
+      }
+
+      const renderCam = debugCameraManager.getCamera(camera);
+      debugCameraManager.update();
+
       applyPinnedOverrides();
 
+      if (scene) {
+        if (currentRenderOverride === 'normals') {
+          scene.overrideMaterial = overrideNormals;
+        } else if (currentRenderOverride === 'depth') {
+          scene.overrideMaterial = overrideDepth;
+        } else if (currentRenderOverride === 'unlit') {
+          scene.overrideMaterial = overrideUnlit;
+        } else if (currentRenderOverride === 'default') {
+          scene.overrideMaterial = null;
+        }
+      }
+
+      gizmoManager.updateHelpersState();
       tickRender(this);
 
-      return originalRender.apply(this, arguments as any);
+      return originalRender.call(this, scene, renderCam);
     };
   }
 
-  // Apply user-pinned property overrides right before frame render
   function applyPinnedOverrides() {
     for (const [uuid, overrides] of pinnedOverrides.entries()) {
       const obj = findObjectByUuid(uuid);
@@ -351,7 +452,6 @@ import {
     }
   }
 
-  // Emit detection signal
   function emitDetection() {
     const version = (window as any).__THREE__ || (window as any).THREE?.REVISION || 'detected';
     emit('THREE_DETECTED', {
@@ -361,10 +461,9 @@ import {
     });
   }
 
-  // Serialize a node recursively
   function serializeNode(node: any, depth = 0): SerializedNode | null {
     if (!node || !node.isObject3D) return null;
-    if (node.name === '__THREE_INSPECTOR_HELPER__') return null;
+    if (node.name && node.name.startsWith('__THREE_INSPECTOR_')) return null;
 
     uuidToObjectMap.set(node.uuid, node);
 
@@ -389,7 +488,6 @@ import {
     };
   }
 
-  // Extract categorized data (Meshes, Lights, Cameras, Materials, Textures, Geometries)
   function extractCategorizedData(): CategorizedSceneData {
     const meshes: CategoryMeshItem[] = [];
     const lights: CategoryLightItem[] = [];
@@ -400,9 +498,8 @@ import {
 
     for (const scene of registeredScenes) {
       scene.traverse((obj: any) => {
-        if (!obj || !obj.isObject3D || obj.name === '__THREE_INSPECTOR_HELPER__') return;
+        if (!obj || !obj.isObject3D || (obj.name && obj.name.startsWith('__THREE_INSPECTOR_'))) return;
 
-        // Meshes & InstancedMeshes
         if (obj.isMesh || obj.isInstancedMesh) {
           let verticesCount = 0;
           let facesCount = 0;
@@ -422,6 +519,7 @@ import {
             }
 
             const geoUuid = obj.geometry.uuid || `geo-${obj.id}`;
+            const memBytes = MemoryAuditor.calculateGeometryBytes(obj.geometry);
             if (!geometryMap.has(geoUuid)) {
               geometryMap.set(geoUuid, {
                 uuid: geoUuid,
@@ -429,6 +527,7 @@ import {
                 type: geoType,
                 verticesCount,
                 facesCount,
+                memoryBytes: memBytes,
                 linkedObjectUuids: [obj.uuid]
               });
             } else {
@@ -460,12 +559,12 @@ import {
                 materialMap.get(matUuid)!.linkedObjectUuids.push(obj.uuid);
               }
 
-              // Textures
               const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
               slots.forEach((slot) => {
                 const tex = m[slot];
                 if (tex && tex.isTexture) {
                   const texUuid = tex.uuid || `tex-${slot}-${matUuid}`;
+                  const memBytes = MemoryAuditor.calculateTextureBytes(tex);
                   if (!textureMap.has(texUuid)) {
                     textureMap.set(texUuid, {
                       uuid: texUuid,
@@ -475,6 +574,8 @@ import {
                       height: tex.image?.height,
                       format: tex.format ? String(tex.format) : undefined,
                       mapping: tex.mapping ? String(tex.mapping) : undefined,
+                      dataUrl: ExporterManager.getTextureThumbnail(tex),
+                      memoryBytes: memBytes,
                       linkedObjectUuids: [obj.uuid]
                     });
                   } else {
@@ -499,7 +600,6 @@ import {
           });
         }
 
-        // Lights
         if (obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
           lights.push({
             id: obj.id,
@@ -512,8 +612,7 @@ import {
           });
         }
 
-        // Cameras
-        if (obj.isCamera) {
+        if (obj.isCamera && !obj.__isInspectorCamera) {
           cameras.push({
             id: obj.id,
             uuid: obj.uuid,
@@ -536,7 +635,6 @@ import {
     };
   }
 
-  // Emit full scene graph & categorized data
   function emitSceneGraph() {
     const scenes: SerializedNode[] = [];
     for (const scene of registeredScenes) {
@@ -549,8 +647,25 @@ import {
     emit('CATEGORIZED_DATA', extractCategorizedData());
   }
 
-  // Extract single material info
   function extractMaterialInfo(mat: any): MaterialInfo {
+    const textureSlots: TextureSlotInfo[] = [];
+    const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
+    slots.forEach((s) => {
+      const tex = mat[s];
+      if (tex && tex.isTexture) {
+        textureSlots.push({
+          slot: s,
+          uuid: tex.uuid,
+          name: tex.name || s,
+          dataUrl: ExporterManager.getTextureThumbnail(tex),
+          width: tex.image?.width,
+          height: tex.image?.height,
+          format: tex.format ? String(tex.format) : undefined,
+          memoryBytes: MemoryAuditor.calculateTextureBytes(tex)
+        });
+      }
+    });
+
     return {
       uuid: mat.uuid || '',
       name: mat.name || mat.type || 'Material',
@@ -564,11 +679,14 @@ import {
       wireframe: Boolean(mat.wireframe),
       visible: mat.visible !== false,
       depthTest: mat.depthTest !== false,
-      depthWrite: mat.depthWrite !== false
+      depthWrite: mat.depthWrite !== false,
+      textures: textureSlots,
+      isShaderMaterial: Boolean(mat.isShaderMaterial || mat.vertexShader || mat.fragmentShader),
+      vertexShader: mat.vertexShader,
+      fragmentShader: mat.fragmentShader
     };
   }
 
-  // Extract object details for inspector view
   function extractObjectDetails(obj: any): ObjectDetails | null {
     if (!obj) return null;
 
@@ -601,7 +719,8 @@ import {
         hasNormals: Boolean(geo.attributes?.normal),
         hasUVs: Boolean(geo.attributes?.uv),
         hasColors: Boolean(geo.attributes?.color),
-        parameters: geo.parameters || undefined
+        parameters: geo.parameters || undefined,
+        memoryBytes: MemoryAuditor.calculateGeometryBytes(geo)
       };
     }
 
@@ -628,7 +747,7 @@ import {
     }
 
     let camera: CameraInfo | null = null;
-    if (obj.isCamera) {
+    if (obj.isCamera && !obj.__isInspectorCamera) {
       camera = {
         fov: obj.fov,
         near: obj.near ?? 0.1,
@@ -672,7 +791,6 @@ import {
     };
   }
 
-  // Update helper highlight in scene (Meshes, Lights, Cameras, Groups)
   function setHighlight(uuid: string | null) {
     if (currentHighlightHelper) {
       if (currentHighlightHelper.parent) {
@@ -685,10 +803,23 @@ import {
       currentHighlightTarget = null;
     }
 
-    if (!uuid) return;
+    if (!uuid) {
+      gizmoManager.detach();
+      return;
+    }
 
     const target = findObjectByUuid(uuid);
-    if (!target) return;
+    if (!target) {
+      gizmoManager.detach();
+      return;
+    }
+
+    const cam = getActiveCamera();
+    const canvas = getActiveCanvas();
+    const scene = getActiveScene();
+    if (cam && canvas && scene) {
+      gizmoManager.attach(target, cam, canvas, scene);
+    }
 
     try {
       let helper: any = null;
@@ -743,7 +874,6 @@ import {
     }
   }
 
-  // Update object properties dynamically
   function updateObjectProperty(payload: UpdatePropertyPayload) {
     const { uuid, path, value } = payload;
     const obj = findObjectByUuid(uuid);
@@ -806,6 +936,10 @@ import {
         mat.metalness = Number(value);
       } else if (subProp === 'visible') {
         mat.visible = Boolean(value);
+      } else if (subProp === 'vertexShader') {
+        mat.vertexShader = String(value);
+      } else if (subProp === 'fragmentShader') {
+        mat.fragmentShader = String(value);
       }
       mat.needsUpdate = true;
     } else if (rootProp === 'light' || obj.isLight || obj.type?.includes('Light') || 'intensity' in obj) {
@@ -841,14 +975,12 @@ import {
       currentHighlightHelper.update();
     }
 
-    // Refresh details for DevTools
     const updatedDetails = extractObjectDetails(obj);
     if (updatedDetails) {
       emit('OBJECT_DETAILS_DATA', updatedDetails);
     }
   }
 
-  // Toggle wireframe on entire scene with shader update
   function toggleWireframe(enabled: boolean) {
     for (const scene of registeredScenes) {
       scene.traverse((node: any) => {
@@ -863,7 +995,6 @@ import {
     }
   }
 
-  // Expose object to console as window.$three
   function inspectInConsole(uuid: string) {
     const obj = findObjectByUuid(uuid);
     if (!obj) return;
@@ -873,7 +1004,7 @@ import {
     } catch (e) {}
     console.log(
       '%c[Three.js Inspector]%c Selected object assigned to %c$three%c and %c$selected%c:',
-      'background: #3b82f6; color: white; padding: 2px 4px; border-radius: 3px; font-weight: bold;',
+      'background: #38bdf8; color: #000; padding: 2px 4px; border-radius: 3px; font-weight: bold;',
       'color: inherit;',
       'color: #10b981; font-weight: bold;',
       'color: inherit;',
@@ -883,7 +1014,61 @@ import {
     );
   }
 
-  // Stats tick called from render hook
+  function spawnPrimitive(type: string) {
+    const scene = getActiveScene();
+    if (!scene) return;
+
+    let newObj: any = null;
+    const defaultMat = new MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.4, metalness: 0.1 });
+
+    switch (type) {
+      case 'box':
+        newObj = new Mesh(new BoxGeometry(1, 1, 1), defaultMat);
+        newObj.name = `Box (${Date.now().toString().slice(-4)})`;
+        break;
+      case 'sphere':
+        newObj = new Mesh(new SphereGeometry(0.7, 32, 16), defaultMat);
+        newObj.name = `Sphere (${Date.now().toString().slice(-4)})`;
+        break;
+      case 'plane':
+        newObj = new Mesh(new PlaneGeometry(2, 2), defaultMat);
+        newObj.name = `Plane (${Date.now().toString().slice(-4)})`;
+        break;
+      case 'cylinder':
+        newObj = new Mesh(new CylinderGeometry(0.5, 0.5, 1.5, 32), defaultMat);
+        newObj.name = `Cylinder (${Date.now().toString().slice(-4)})`;
+        break;
+      case 'directionalLight':
+        newObj = new DirectionalLight(0xffffff, 2);
+        newObj.position.set(5, 10, 7);
+        newObj.name = `DirectionalLight (${Date.now().toString().slice(-4)})`;
+        break;
+      case 'pointLight':
+        newObj = new PointLight(0xffea00, 3, 10);
+        newObj.position.set(0, 3, 0);
+        newObj.name = `PointLight (${Date.now().toString().slice(-4)})`;
+        break;
+      case 'ambientLight':
+        newObj = new AmbientLight(0xffffff, 0.5);
+        newObj.name = `AmbientLight (${Date.now().toString().slice(-4)})`;
+        break;
+      case 'group':
+        newObj = new Group();
+        newObj.name = `Group (${Date.now().toString().slice(-4)})`;
+        break;
+    }
+
+    if (newObj) {
+      scene.add(newObj);
+      indexSceneObjects(scene);
+      emitSceneGraph();
+      activeSelectedUuid = newObj.uuid;
+      setHighlight(newObj.uuid);
+      const details = extractObjectDetails(newObj);
+      if (details) emit('OBJECT_DETAILS_DATA', details);
+    }
+  }
+
   function tickRender(renderer: any) {
     frameCount++;
     const now = performance.now();
@@ -914,7 +1099,6 @@ import {
       emit('STATS_UPDATE', stats);
     }
 
-    // Keep highlight helper in sync with target
     if (currentHighlightHelper && currentHighlightTarget) {
       if (typeof currentHighlightHelper.update === 'function') {
         currentHighlightHelper.update();
@@ -930,13 +1114,9 @@ import {
     }
   }
 
-  // 3D Canvas Raycasting implementation
   function performRaycastAt(clientX: number, clientY: number): string | null {
     const camera = getActiveCamera();
-    if (!camera) {
-      console.warn('[Three.js Inspector] No active camera found for picking');
-      return null;
-    }
+    if (!camera) return null;
 
     camera.updateMatrixWorld(true);
 
@@ -961,7 +1141,7 @@ import {
           if (
             (obj.isMesh || obj.isInstancedMesh || obj.isLine || obj.isPoints) &&
             obj.visible &&
-            obj.name !== '__THREE_INSPECTOR_HELPER__'
+            (!obj.name || !obj.name.startsWith('__THREE_INSPECTOR_'))
           ) {
             targets.push(obj);
           }
@@ -992,7 +1172,6 @@ import {
     return null;
   }
 
-  // Unified global picker event handlers attached at window capture phase
   function onGlobalPickerMove(e: PointerEvent) {
     if (!pickerEnabled) return;
     performRaycastAt(e.clientX, e.clientY);
@@ -1061,7 +1240,6 @@ import {
     }
   }
 
-  // Universal Hook into THREE.WebGLRenderer Prototype
   function hookRendererPrototype() {
     const THREE = (window as any).THREE;
     if (THREE && THREE.WebGLRenderer && !THREE.WebGLRenderer.__INSPECTOR_HOOKED__) {
@@ -1071,17 +1249,41 @@ import {
       THREE.WebGLRenderer.prototype.render = function (scene: any, camera: any) {
         registerRenderer(this);
         if (scene) registerScene(scene);
-        if (camera) lastActiveCamera = camera;
+        if (camera && !camera.__isInspectorCamera) lastActiveCamera = camera;
+
+        if (simulationPaused && !stepOneFrame) {
+          return;
+        }
+        if (stepOneFrame) {
+          stepOneFrame = false;
+        }
+
+        const renderCam = debugCameraManager.getCamera(camera);
+        debugCameraManager.update();
+
         applyPinnedOverrides();
+
+        if (scene) {
+          if (currentRenderOverride === 'normals') {
+            scene.overrideMaterial = overrideNormals;
+          } else if (currentRenderOverride === 'depth') {
+            scene.overrideMaterial = overrideDepth;
+          } else if (currentRenderOverride === 'unlit') {
+            scene.overrideMaterial = overrideUnlit;
+          } else if (currentRenderOverride === 'default') {
+            scene.overrideMaterial = null;
+          }
+        }
+
+        gizmoManager.updateHelpersState();
         tickRender(this);
-        return originalRender.apply(this, arguments as any);
+        return originalRender.call(this, scene, renderCam);
       };
 
       emitDetection();
     }
   }
 
-  // Listen to messages from content script
   window.addEventListener('message', (event) => {
     if (event.source !== window || !event.data || event.data.source !== MESSAGE_SOURCE.CONTENT) {
       return;
@@ -1101,6 +1303,15 @@ import {
         emitSceneGraph();
         break;
 
+      case 'REQUEST_MEMORY_AUDIT':
+        emit('MEMORY_AUDIT_DATA', MemoryAuditor.audit(registeredScenes, allKnownGeometries, allKnownTextures));
+        break;
+
+      case 'REQUEST_ANIMATIONS':
+        animationManager.scanScenesForMixers(registeredScenes);
+        emit('ANIMATION_DATA', animationManager.getMixersData());
+        break;
+
       case 'SELECT_OBJECT':
         if (payload?.uuid) {
           activeSelectedUuid = payload.uuid;
@@ -1108,9 +1319,7 @@ import {
           if (obj) {
             setHighlight(payload.uuid);
             const details = extractObjectDetails(obj);
-            if (details) {
-              emit('OBJECT_DETAILS_DATA', details);
-            }
+            if (details) emit('OBJECT_DETAILS_DATA', details);
           }
         }
         break;
@@ -1120,32 +1329,99 @@ import {
         break;
 
       case 'UPDATE_PROPERTY':
-        if (payload) {
-          updateObjectProperty(payload);
-        }
+        if (payload) updateObjectProperty(payload);
         break;
 
       case 'RESET_PROPERTY_OVERRIDES':
-        if (payload?.uuid) {
-          unpinObjectProperties(payload.uuid);
-        }
+        if (payload?.uuid) unpinObjectProperties(payload.uuid);
         break;
 
       case 'INSPECT_IN_CONSOLE':
-        if (payload?.uuid) {
-          inspectInConsole(payload.uuid);
-        }
+        if (payload?.uuid) inspectInConsole(payload.uuid);
         break;
 
       case 'TOGGLE_WIREFRAME':
-        if (typeof payload?.enabled === 'boolean') {
-          toggleWireframe(payload.enabled);
-        }
+        if (typeof payload?.enabled === 'boolean') toggleWireframe(payload.enabled);
+        break;
+
+      case 'SET_RENDER_OVERRIDE':
+        if (payload?.mode) currentRenderOverride = payload.mode;
         break;
 
       case 'TOGGLE_PICKER':
-        if (typeof payload?.enabled === 'boolean') {
-          setPickerMode(payload.enabled);
+        if (typeof payload?.enabled === 'boolean') setPickerMode(payload.enabled);
+        break;
+
+      case 'SET_GIZMO_MODE':
+        if (payload?.mode) gizmoManager.setMode(payload.mode);
+        break;
+
+      case 'FOCUS_OBJECT':
+        if (payload?.uuid) {
+          const obj = findObjectByUuid(payload.uuid);
+          const cam = getActiveCamera();
+          if (obj && cam) gizmoManager.focusObject(obj, cam);
+        }
+        break;
+
+      case 'TOGGLE_DEBUG_CAMERA': {
+        const canvas = getActiveCanvas();
+        if (canvas) {
+          if (debugCameraManager.isEnabled()) {
+            debugCameraManager.disable();
+          } else {
+            debugCameraManager.enable(canvas, lastActiveCamera);
+          }
+        }
+        break;
+      }
+
+      case 'TOGGLE_PAUSE_SCENE':
+        simulationPaused = Boolean(payload?.enabled);
+        break;
+
+      case 'STEP_SIMULATION_FRAME':
+        stepOneFrame = true;
+        break;
+
+      case 'SPAWN_PRIMITIVE':
+        if (payload?.type) spawnPrimitive(payload.type);
+        break;
+
+      case 'EXPORT_GLTF': {
+        const target = payload?.uuid ? findObjectByUuid(payload.uuid) : getActiveScene();
+        if (target) ExporterManager.exportToGLTF(target, `${target.name || 'threejs-scene'}.glb`);
+        break;
+      }
+
+      case 'CAPTURE_SCREENSHOT': {
+        const canvas = getActiveCanvas();
+        if (canvas) ExporterManager.captureCanvasScreenshot(canvas);
+        break;
+      }
+
+      case 'CONTROL_ANIMATION':
+        if (payload) {
+          animationManager.control(payload.mixerId, payload.clipName, payload.action, payload.value);
+        }
+        break;
+
+      case 'DISPOSE_RESOURCE':
+        if (payload?.uuid && payload?.type) {
+          if (payload.type === 'geometry') {
+            const geo = allKnownGeometries.get(payload.uuid);
+            if (geo && typeof geo.dispose === 'function') {
+              geo.dispose();
+              allKnownGeometries.delete(payload.uuid);
+            }
+          } else if (payload.type === 'texture') {
+            const tex = allKnownTextures.get(payload.uuid);
+            if (tex && typeof tex.dispose === 'function') {
+              tex.dispose();
+              allKnownTextures.delete(payload.uuid);
+            }
+          }
+          emit('MEMORY_AUDIT_DATA', MemoryAuditor.audit(registeredScenes, allKnownGeometries, allKnownTextures));
         }
         break;
 
@@ -1162,7 +1438,6 @@ import {
     }
   });
 
-  // Setup Three.js DevTools Hook Protocol immediately
   function setupDevToolsHook() {
     try {
       let devtools = (window as any).__THREE_DEVTOOLS__;
@@ -1183,7 +1458,6 @@ import {
         }
       }
 
-      // Three.js r120+ standard devtools event protocol
       if (devtools && typeof devtools.addEventListener === 'function') {
         devtools.addEventListener('observe', (event: any) => {
           const detail = event?.detail;
@@ -1206,20 +1480,6 @@ import {
         });
       }
 
-      if (devtools && typeof devtools === 'object') {
-        try {
-          devtools.registerScene = registerScene;
-          devtools.registerRenderer = registerRenderer;
-          devtools.getScenes = () => Array.from(registeredScenes);
-          devtools.getRenderers = () => Array.from(registeredRenderers);
-          devtools.refresh = () => {
-            emitDetection();
-            emitSceneGraph();
-          };
-        } catch {}
-      }
-
-      // Public API exposed on window.__THREE_INSPECTOR__ for direct DevTools panel eval
       try {
         (window as any).__THREE_INSPECTOR__ = {
           registerScene,
@@ -1230,6 +1490,78 @@ import {
           unpinObjectProperties,
           toggleWireframe,
           setPickerMode,
+          setGizmoMode: (mode: GizmoMode) => gizmoManager.setMode(mode),
+          getGizmoMode: () => gizmoManager.getMode(),
+          focusObject: (uuid: string) => {
+            const obj = findObjectByUuid(uuid);
+            const cam = getActiveCamera();
+            if (obj && cam) gizmoManager.focusObject(obj, cam);
+          },
+          toggleDebugCamera: () => {
+            const canvas = getActiveCanvas();
+            if (canvas) {
+              if (debugCameraManager.isEnabled()) {
+                debugCameraManager.disable();
+              } else {
+                debugCameraManager.enable(canvas, lastActiveCamera);
+              }
+            }
+            return debugCameraManager.isEnabled();
+          },
+          isDebugCameraActive: () => debugCameraManager.isEnabled(),
+          setHelpers: (opts: Partial<HelperOptions>) => {
+            Object.assign(helperSettings, opts);
+            const scene = getActiveScene();
+            if (scene) gizmoManager.updateHelpers(scene, helperSettings);
+          },
+          getHelpers: () => helperSettings,
+          setRenderOverride: (mode: 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit') => {
+            currentRenderOverride = mode;
+          },
+          getRenderOverride: () => currentRenderOverride,
+          togglePauseSimulation: (enable?: boolean) => {
+            simulationPaused = enable !== undefined ? enable : !simulationPaused;
+            return simulationPaused;
+          },
+          stepSimulationFrame: () => {
+            stepOneFrame = true;
+          },
+          exportGLTF: (uuid?: string) => {
+            const target = uuid ? findObjectByUuid(uuid) : getActiveScene();
+            if (target) ExporterManager.exportToGLTF(target, `${target.name || 'scene'}.glb`);
+          },
+          captureScreenshot: () => {
+            const canvas = getActiveCanvas();
+            if (canvas) ExporterManager.captureCanvasScreenshot(canvas);
+          },
+          downloadTexture: (uuid: string) => {
+            const tex = allKnownTextures.get(uuid);
+            if (tex) ExporterManager.downloadTexture(tex);
+          },
+          getMemoryAudit: () => MemoryAuditor.audit(registeredScenes, allKnownGeometries, allKnownTextures),
+          disposeResource: (uuid: string, type: 'geometry' | 'texture') => {
+            if (type === 'geometry') {
+              const geo = allKnownGeometries.get(uuid);
+              if (geo) {
+                geo.dispose?.();
+                allKnownGeometries.delete(uuid);
+              }
+            } else {
+              const tex = allKnownTextures.get(uuid);
+              if (tex) {
+                tex.dispose?.();
+                allKnownTextures.delete(uuid);
+              }
+            }
+          },
+          getAnimations: () => {
+            animationManager.scanScenesForMixers(registeredScenes);
+            return animationManager.getMixersData();
+          },
+          controlAnimation: (mixerId: string, clipName: string, action: any, value?: number) => {
+            animationManager.control(mixerId, clipName, action, value);
+          },
+          spawnPrimitive,
           setPointerLockBypass: (enabled: boolean) => {
             bypassPointerLock = enabled;
             if (enabled && document.pointerLockElement) {
@@ -1260,11 +1592,9 @@ import {
     } catch (e) {}
   }
 
-  // Initialize devtools protocol immediately
   setupDevToolsHook();
   hookRendererPrototype();
 
-  // Watch for scenes and renderers in window scope or dynamically created
   let checkCount = 0;
   const interval = setInterval(() => {
     checkCount++;
@@ -1282,7 +1612,6 @@ import {
     }
   }, 400);
 
-  // Hook WebGL Canvas Context
   const origGetContext = HTMLCanvasElement.prototype.getContext;
   (HTMLCanvasElement.prototype as any).getContext = function (type: string, ...args: any[]) {
     const ctx = origGetContext.apply(this, [type, ...args] as any);

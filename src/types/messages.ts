@@ -2,7 +2,9 @@ import type {
   SerializedNode,
   ObjectDetails,
   RendererStats,
-  CategorizedSceneData
+  CategorizedSceneData,
+  MemoryAuditData,
+  AnimationMixerInfo
 } from './three-data';
 
 export const MESSAGE_SOURCE = {
@@ -24,19 +26,34 @@ export type ActionType =
   | 'STATS_UPDATE'
   | 'OBJECT_MUTATED'
   | 'OBJECT_PICKED'
+  | 'MEMORY_AUDIT_DATA'
+  | 'ANIMATION_DATA'
+  | 'TRANSFORM_GIZMO_UPDATED'
   // Extension -> Hook
   | 'REQUEST_SCENE_GRAPH'
+  | 'REQUEST_MEMORY_AUDIT'
+  | 'REQUEST_ANIMATIONS'
   | 'SELECT_OBJECT'
   | 'HIGHLIGHT_OBJECT'
   | 'UPDATE_PROPERTY'
   | 'INSPECT_IN_CONSOLE'
   | 'TOGGLE_HELPER'
   | 'TOGGLE_WIREFRAME'
+  | 'SET_RENDER_OVERRIDE'
   | 'TOGGLE_PICKER'
+  | 'SET_GIZMO_MODE'
+  | 'FOCUS_OBJECT'
+  | 'TOGGLE_DEBUG_CAMERA'
   | 'TOGGLE_POINTER_LOCK_BYPASS'
   | 'LOCK_TRANSFORM'
   | 'RESET_PROPERTY_OVERRIDES'
   | 'TOGGLE_PAUSE_SCENE'
+  | 'STEP_SIMULATION_FRAME'
+  | 'SPAWN_PRIMITIVE'
+  | 'EXPORT_GLTF'
+  | 'CAPTURE_SCREENSHOT'
+  | 'CONTROL_ANIMATION'
+  | 'DISPOSE_RESOURCE'
   | 'PING'
   | 'PONG';
 
@@ -102,4 +119,23 @@ export interface LockTransformPayload {
 
 export interface TogglePauseScenePayload {
   enabled: boolean;
+}
+
+export interface SetGizmoModePayload {
+  mode: 'translate' | 'rotate' | 'scale' | 'none';
+}
+
+export interface SetRenderOverridePayload {
+  mode: 'default' | 'wireframe' | 'normals' | 'depth' | 'unlit';
+}
+
+export interface SpawnPrimitivePayload {
+  type: 'box' | 'sphere' | 'plane' | 'cylinder' | 'directionalLight' | 'pointLight' | 'ambientLight' | 'group';
+}
+
+export interface ControlAnimationPayload {
+  mixerId: string;
+  clipName: string;
+  action: 'play' | 'pause' | 'stop' | 'seek' | 'speed';
+  value?: number;
 }
