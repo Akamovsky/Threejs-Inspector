@@ -15,6 +15,15 @@ export class GizmoManager {
   private onTransformChange?: (obj: any) => void;
   private onDraggingChange?: (isDragging: boolean) => void;
 
+  // Camera Focus Cache & Revert
+  private savedCameraState: {
+    position: Vector3;
+    quaternion: any;
+    zoom: number;
+    fov?: number;
+  } | null = null;
+  private focusedObjectUuid: string | null = null;
+
   constructor() {
     this.helperRoot.name = '__THREE_INSPECTOR_HELPERS__';
   }
@@ -41,11 +50,17 @@ export class GizmoManager {
 
         this.transformControls.addEventListener('change', () => {
           if (this.targetObject && this.onTransformChange) {
-            this.targetObject.matrixAutoUpdate = true;
-            this.targetObject.matrixWorldNeedsUpdate = true;
-            this.targetObject.updateMatrix();
-            this.targetObject.updateMatrixWorld(true);
-            this.onTransformChange(this.targetObject);
+            try {
+              this.targetObject.matrixAutoUpdate = true;
+              this.targetObject.matrixWorldNeedsUpdate = true;
+              if (typeof this.targetObject.updateMatrix === 'function') {
+                this.targetObject.updateMatrix();
+              }
+              if (typeof this.targetObject.updateMatrixWorld === 'function') {
+                this.targetObject.updateMatrixWorld(true);
+              }
+              this.onTransformChange(this.targetObject);
+            } catch (e) {}
           }
         });
 
@@ -111,8 +126,46 @@ export class GizmoManager {
     }
   }
 
-  public focusObject(target: any, camera: any) {
-    if (!target || !camera) return;
+  public isFocused(uuid?: string): boolean {
+    if (!this.savedCameraState) return false;
+    if (uuid) return this.focusedObjectUuid === uuid;
+    return true;
+  }
+
+  public revertFocus(camera: any): boolean {
+    if (!this.savedCameraState || !camera) return false;
+    try {
+      camera.position.copy(this.savedCameraState.position);
+      camera.quaternion.copy(this.savedCameraState.quaternion);
+      if (this.savedCameraState.fov && camera.fov) camera.fov = this.savedCameraState.fov;
+      if (this.savedCameraState.zoom && camera.zoom) camera.zoom = this.savedCameraState.zoom;
+      camera.updateMatrixWorld?.(true);
+      camera.updateProjectionMatrix?.();
+    } catch (e) {}
+    this.savedCameraState = null;
+    this.focusedObjectUuid = null;
+    return true;
+  }
+
+  public toggleFocus(target: any, camera: any): boolean {
+    if (!target || !camera) return false;
+
+    // If already focused on this object, revert to original!
+    if (this.focusedObjectUuid === target.uuid && this.savedCameraState) {
+      this.revertFocus(camera);
+      return false;
+    }
+
+    // Cache original camera state before moving
+    if (!this.savedCameraState) {
+      this.savedCameraState = {
+        position: camera.position.clone(),
+        quaternion: camera.quaternion.clone(),
+        zoom: camera.zoom || 1,
+        fov: camera.fov
+      };
+    }
+    this.focusedObjectUuid = target.uuid;
 
     try {
       const box = new Box3();
@@ -138,11 +191,11 @@ export class GizmoManager {
 
       camera.position.copy(center).addScaledVector(direction, distance);
       camera.lookAt(center);
-      if (camera.updateProjectionMatrix) {
-        camera.updateProjectionMatrix();
-      }
+      camera.updateMatrixWorld?.(true);
+      camera.updateProjectionMatrix?.();
     } catch (e) {
       console.warn('[Three.js Inspector] Focus failed:', e);
     }
+    return true;
   }
 }

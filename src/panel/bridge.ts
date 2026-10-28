@@ -26,6 +26,7 @@ export const state = reactive({
   wireframeActive: false,
   scenePaused: false,
   debugCameraActive: false,
+  isFocused: false,
   gizmoMode: 'none' as 'translate' | 'rotate' | 'scale' | 'none',
   memoryAudit: null as MemoryAuditData | null,
   animations: [] as AnimationMixerInfo[],
@@ -140,6 +141,12 @@ function handleMessage(message: InspectorMessage) {
         });
       }
       break;
+
+    case 'FOCUS_STATE_CHANGED':
+      if (typeof message.payload?.isFocused === 'boolean') {
+        state.isFocused = message.payload.isFocused;
+      }
+      break;
   }
 }
 
@@ -229,16 +236,43 @@ export function setGizmoMode(mode: 'translate' | 'rotate' | 'scale' | 'none') {
   send('SET_GIZMO_MODE', { mode });
 }
 
-export function focusObject(uuid?: string) {
+export function toggleFocusObject(uuid?: string) {
   const targetUuid = uuid || state.selectedUuid;
   if (!targetUuid) return;
   const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.focusObject(${JSON.stringify(targetUuid)});
-    }
+    (function() {
+      if (window.__THREE_INSPECTOR__) {
+        return window.__THREE_INSPECTOR__.toggleFocus(${JSON.stringify(targetUuid)});
+      }
+      return false;
+    })()
   `;
-  executeInPage(script);
-  send('FOCUS_OBJECT', { uuid: targetUuid });
+  executeInPage(script, (isFocused) => {
+    state.isFocused = Boolean(isFocused);
+  });
+}
+
+export function revertFocus() {
+  const script = `
+    (function() {
+      if (window.__THREE_INSPECTOR__) {
+        return window.__THREE_INSPECTOR__.revertFocus();
+      }
+      return false;
+    })()
+  `;
+  executeInPage(script, () => {
+    state.isFocused = false;
+  });
+}
+
+// Window Escape key handler in DevTools panel
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.isFocused) {
+      revertFocus();
+    }
+  });
 }
 
 export function toggleDebugCamera() {

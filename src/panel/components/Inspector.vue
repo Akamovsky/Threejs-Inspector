@@ -6,7 +6,7 @@ import {
   inspectInConsole,
   resetPropertyOverrides,
   setGizmoMode,
-  focusObject,
+  toggleFocusObject,
   copyThreeCode,
   downloadTexture
 } from '../bridge';
@@ -84,10 +84,15 @@ function applyShaders() {
         <div class="title-row">
           <span class="obj-name">{{ obj.name }}</span>
           <div class="header-tools">
-            <!-- Focus in 3D -->
-            <button class="tool-btn" @click="focusObject(obj.uuid)" title="Focus Camera on Object (F)">
+            <!-- Focus / Unfocus in 3D -->
+            <button
+              class="tool-btn"
+              :class="{ active: state.isFocused }"
+              @click="toggleFocusObject(obj.uuid)"
+              :title="state.isFocused ? 'Revert Camera to Original View (Esc)' : 'Focus Camera on Object (F)'"
+            >
               <Crosshair :size="12" />
-              <span>Focus</span>
+              <span>{{ state.isFocused ? 'Unfocus (Esc)' : 'Focus' }}</span>
             </button>
 
             <!-- Copy Three.js Code -->
@@ -655,6 +660,13 @@ function applyShaders() {
   background: var(--bg-hover);
   color: #38bdf8;
   border-color: #38bdf8;
+}
+
+.tool-btn.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  border-color: #38bdf8;
+  font-weight: 600;
 }
 
 .console-btn {

@@ -29,6 +29,7 @@ export type ActionType =
   | 'MEMORY_AUDIT_DATA'
   | 'ANIMATION_DATA'
   | 'TRANSFORM_GIZMO_UPDATED'
+  | 'FOCUS_STATE_CHANGED'
   // Extension -> Hook
   | 'REQUEST_SCENE_GRAPH'
   | 'REQUEST_MEMORY_AUDIT'
