@@ -4,7 +4,8 @@ import {
   Box3Helper,
   Vector3,
   Color,
-  MeshBasicMaterial
+  MeshBasicMaterial,
+  Matrix4
 } from 'three';
 import type {
   SerializedNode,
@@ -39,6 +40,27 @@ import { AnimationManager } from './animations';
     return;
   }
   (window as any).__THREE_INSPECTOR_HOOK_INSTALLED__ = true;
+
+  // Polyfill Matrix4.prototype.determinantAffine across Three.js bundles (r185+ compatibility)
+  function ensureDeterminantAffine(proto: any) {
+    try {
+      if (proto && !proto.determinantAffine) {
+        proto.determinantAffine = function () {
+          const te = this.elements;
+          if (!te) return 1;
+          const m11 = te[0], m12 = te[4], m13 = te[8];
+          const m21 = te[1], m22 = te[5], m23 = te[9];
+          const m31 = te[2], m32 = te[6], m33 = te[10];
+          return m11 * (m22 * m33 - m23 * m32) -
+            m12 * (m21 * m33 - m23 * m31) +
+            m13 * (m21 * m32 - m22 * m31);
+        };
+      }
+    } catch (e) {}
+  }
+  if (typeof Matrix4 !== 'undefined') {
+    ensureDeterminantAffine(Matrix4.prototype);
+  }
 
   // Active Three.js instances
   const registeredScenes = new Set<any>();
@@ -340,6 +362,9 @@ import { AnimationManager } from './animations';
       }
 
       // True 3D Scene!
+      if (scene?.matrixWorld) {
+        ensureDeterminantAffine(Object.getPrototypeOf(scene.matrixWorld));
+      }
       registerScene(scene);
       if (camera && !camera.__isInspectorCamera) {
         lastActiveCamera = camera;
@@ -369,7 +394,6 @@ import { AnimationManager } from './animations';
       return originalRender.call(this, scene, renderCam);
     } catch (err) {
       console.warn('[Three.js Inspector] render hook fallback:', err);
-      return originalRender.call(this, scene, camera);
     }
   }
 
@@ -869,6 +893,9 @@ import { AnimationManager } from './animations';
 
       helper.name = '__THREE_INSPECTOR_HELPER__';
       helper.__isInspectorObject = true;
+      if (helper.matrixWorld) {
+        ensureDeterminantAffine(Object.getPrototypeOf(helper.matrixWorld));
+      }
 
       if (scene) {
         scene.add(helper);
@@ -922,6 +949,9 @@ import { AnimationManager } from './animations';
 
       helper.name = '__THREE_INSPECTOR_HOVER__';
       helper.__isInspectorObject = true;
+      if (helper.matrixWorld) {
+        ensureDeterminantAffine(Object.getPrototypeOf(helper.matrixWorld));
+      }
 
       const scene = getObjectScene(target);
       if (scene) {
