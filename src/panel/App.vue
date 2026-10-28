@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import {
   state,
   setGizmoMode,
@@ -30,7 +30,10 @@ import {
 } from 'lucide-vue-next';
 
 const explorerView = ref<'hierarchy' | 'categories'>('hierarchy');
-const activeTab = ref<'inspector' | 'stats' | 'animations' | 'edits'>('inspector');
+const activeTab = computed({
+  get: () => state.activeTab,
+  set: (val) => { state.activeTab = val; }
+});
 </script>
 
 <template>

@@ -453,6 +453,20 @@ import { AnimationManager } from './animations';
     } catch (e) {}
   }
 
+  function getObjectDisplayName(obj: any): string {
+    if (!obj) return 'Object';
+    if (obj.name && typeof obj.name === 'string' && obj.name.trim().length > 0) {
+      return obj.name.trim();
+    }
+    if (obj.parent && obj.parent.name && typeof obj.parent.name === 'string' && obj.parent.name.trim().length > 0 && !obj.parent.isScene && !isInternalInspectorObject(obj.parent)) {
+      return `${obj.parent.name.trim()} / ${obj.type || 'Object'}`;
+    }
+    if (obj.geometry?.name && typeof obj.geometry.name === 'string' && obj.geometry.name.trim().length > 0) {
+      return `${obj.geometry.name.trim()} (${obj.type || 'Mesh'})`;
+    }
+    return obj.type ? `${obj.type} (${obj.id})` : `Object3D (${obj.id})`;
+  }
+
   function serializeNode(node: any, depth = 0): SerializedNode | null {
     if (!node || !node.isObject3D) return null;
     if (isInternalInspectorObject(node)) return null;
@@ -474,7 +488,7 @@ import { AnimationManager } from './animations';
     return {
       id: node.id,
       uuid: node.uuid,
-      name: node.name || (node.type ? `${node.type} (${node.id})` : `Object3D (${node.id})`),
+      name: getObjectDisplayName(node),
       type: node.type || 'Object3D',
       visible: node.visible !== false,
       childrenCount: children.length,
@@ -498,8 +512,19 @@ import { AnimationManager } from './animations';
           try {
             if (!obj || !obj.isObject3D || isInternalInspectorObject(obj)) return;
 
-            // Meshes & InstancedMeshes
-            if (obj.isMesh || obj.isInstancedMesh) {
+            // Meshes, SkinnedMeshes, Lines, Points, Sprites
+            const isRenderable = Boolean(
+              obj.isMesh ||
+              obj.isInstancedMesh ||
+              obj.isSkinnedMesh ||
+              obj.isLine ||
+              obj.isLineSegments ||
+              obj.isLineLoop ||
+              obj.isPoints ||
+              obj.isSprite
+            );
+
+            if (isRenderable) {
               // Exclude fullscreen postprocessing quads
               if (obj.geometry?.type === 'FullscreenTriangleGeometry') return;
 
@@ -525,7 +550,9 @@ import { AnimationManager } from './animations';
                 if (!geometryMap.has(geoUuid)) {
                   geometryMap.set(geoUuid, {
                     uuid: geoUuid,
-                    name: obj.geometry.name || geoType,
+                    name: (obj.geometry.name && obj.geometry.name.trim().length > 0)
+                      ? obj.geometry.name.trim()
+                      : `${getObjectDisplayName(obj)} Geometry`,
                     type: geoType,
                     verticesCount,
                     facesCount,
@@ -550,7 +577,9 @@ import { AnimationManager } from './animations';
                   if (!materialMap.has(matUuid)) {
                     materialMap.set(matUuid, {
                       uuid: matUuid,
-                      name: m.name || m.type || 'Material',
+                      name: (m.name && m.name.trim().length > 0)
+                        ? m.name.trim()
+                        : `${getObjectDisplayName(obj)} Material`,
                       type: m.type || 'Material',
                       color: m.color ? colorToHex(m.color) : undefined,
                       wireframe: Boolean(m.wireframe),
@@ -571,7 +600,9 @@ import { AnimationManager } from './animations';
                       if (!textureMap.has(texUuid)) {
                         textureMap.set(texUuid, {
                           uuid: texUuid,
-                          name: tex.name || `${m.name || 'Material'} ${slot}`,
+                          name: (tex.name && tex.name.trim().length > 0)
+                            ? tex.name.trim()
+                            : `${m.name || getObjectDisplayName(obj)} ${slot}`,
                           type: slot,
                           width: tex.image?.width,
                           height: tex.image?.height,
@@ -592,7 +623,7 @@ import { AnimationManager } from './animations';
               meshes.push({
                 id: obj.id,
                 uuid: obj.uuid,
-                name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Mesh (${obj.id})`),
+                name: getObjectDisplayName(obj),
                 type: obj.type || 'Mesh',
                 geometryType: geoType,
                 materialType: matType,
@@ -607,7 +638,7 @@ import { AnimationManager } from './animations';
               lights.push({
                 id: obj.id,
                 uuid: obj.uuid,
-                name: obj.name || (obj.type ? `${obj.type} (${obj.id})` : `Light (${obj.id})`),
+                name: getObjectDisplayName(obj),
                 type: obj.type || 'Light',
                 color: colorToHex(obj.color),
                 intensity: typeof obj.intensity === 'number' ? obj.intensity : 1,
@@ -619,7 +650,7 @@ import { AnimationManager } from './animations';
               cameras.push({
                 id: obj.id,
                 uuid: obj.uuid,
-                name: obj.name || `Camera (${obj.id})`,
+                name: getObjectDisplayName(obj),
                 type: obj.type || 'Camera',
                 fov: obj.fov,
                 visible: obj.visible !== false
@@ -857,7 +888,11 @@ import { AnimationManager } from './animations';
     const scene = getObjectScene(target);
 
     if (cam && canvas && scene) {
-      gizmoManager.attach(target, cam, canvas, scene);
+      if (gizmoManager.getMode() !== 'none') {
+        gizmoManager.attach(target, cam, canvas, scene);
+      } else {
+        gizmoManager.detach();
+      }
     }
 
     try {
@@ -1067,19 +1102,28 @@ import { AnimationManager } from './animations';
     } catch (e) {}
   }
 
+  const originalMaterialWireframe = new WeakMap<any, boolean>();
+
   function toggleWireframe(enabled: boolean) {
     try {
       isWireframeActive = enabled;
       for (const scene of registeredScenes) {
+        if (!scene || !scene.isScene) continue;
         scene.overrideMaterial = enabled ? overrideWireframe : null;
         scene.traverse((node: any) => {
-          if (node.material) {
+          if (node.material && !isInternalInspectorObject(node)) {
             const materials = Array.isArray(node.material) ? node.material : [node.material];
             materials.forEach((m: any) => {
-              if (node.__origWireframe === undefined) {
-                node.__origWireframe = Boolean(m.wireframe);
+              if (!m) return;
+              if (enabled) {
+                if (!originalMaterialWireframe.has(m)) {
+                  originalMaterialWireframe.set(m, Boolean(m.wireframe));
+                }
+                m.wireframe = true;
+              } else {
+                const orig = originalMaterialWireframe.get(m);
+                m.wireframe = orig !== undefined ? orig : false;
               }
-              m.wireframe = enabled ? true : node.__origWireframe;
               m.needsUpdate = true;
             });
           }

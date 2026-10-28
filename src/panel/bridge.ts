@@ -33,6 +33,7 @@ export const state = reactive({
   sessionEdits: [] as SessionEditRecord[],
   lockedTransformUuids: new Set<string>(),
   filterQuery: '',
+  activeTab: 'inspector' as 'inspector' | 'stats' | 'animations' | 'edits',
   statusMessage: 'Waiting for Three.js scene...'
 });
 
@@ -182,10 +183,7 @@ export function logSessionEdit(uuid: string, objectName: string, path: string, v
 
 export function selectObject(uuid: string) {
   state.selectedUuid = uuid;
-
-  if (state.gizmoMode === 'none') {
-    state.gizmoMode = 'translate';
-  }
+  state.activeTab = 'inspector';
 
   const script = `
     (function() {
@@ -200,6 +198,8 @@ export function selectObject(uuid: string) {
       state.selectedObject = details;
     }
   });
+
+  send('SELECT_OBJECT', { uuid });
 }
 
 let hoverDebounceTimer: any = null;

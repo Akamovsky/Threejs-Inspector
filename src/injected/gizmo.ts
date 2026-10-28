@@ -7,7 +7,7 @@ export type GizmoMode = 'translate' | 'rotate' | 'scale' | 'none';
 
 export class GizmoManager {
   private transformControls: TransformControls | null = null;
-  private currentMode: GizmoMode = 'translate';
+  private currentMode: GizmoMode = 'none';
   private targetObject: any = null;
   private helperRoot = new Group();
   private onTransformChange?: (obj: any) => void;
