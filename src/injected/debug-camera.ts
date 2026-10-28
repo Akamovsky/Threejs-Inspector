@@ -1,9 +1,11 @@
-import { PerspectiveCamera, Vector3, Box3 } from 'three';
+import { PerspectiveCamera, Vector3, Box3, DirectionalLight, AmbientLight } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export class DebugCameraManager {
   private debugCamera: PerspectiveCamera | null = null;
   private controls: OrbitControls | null = null;
+  private headlight: DirectionalLight | null = null;
+  private ambientLight: AmbientLight | null = null;
   private isActive = false;
   private canvas: HTMLCanvasElement | null = null;
   private onContextMenuBound: ((e: MouseEvent) => void) | null = null;
@@ -51,11 +53,17 @@ export class DebugCameraManager {
       currentCamera?.far || 5000
     );
     this.debugCamera.name = '__THREE_INSPECTOR_DEBUG_CAM__';
+    (this.debugCamera as any).__isInspectorObject = true;
     (this.debugCamera as any).__isInspectorCamera = true;
 
     if (currentCamera) {
-      this.debugCamera.position.copy(currentCamera.position);
-      this.debugCamera.quaternion.copy(currentCamera.quaternion);
+      if (typeof currentCamera.getWorldPosition === 'function') {
+        currentCamera.getWorldPosition(this.debugCamera.position);
+        currentCamera.getWorldQuaternion(this.debugCamera.quaternion);
+      } else if (currentCamera.position) {
+        this.debugCamera.position.copy(currentCamera.position);
+        this.debugCamera.quaternion.copy(currentCamera.quaternion);
+      }
       this.debugCamera.zoom = currentCamera.zoom || 1;
     } else {
       this.debugCamera.position.set(0, 5, 10);
@@ -63,6 +71,17 @@ export class DebugCameraManager {
     }
     this.debugCamera.updateMatrixWorld(true);
     this.debugCamera.updateProjectionMatrix();
+
+    // Attach gentle headlights so dark levels/rooms are clearly visible in debug mode
+    this.headlight = new DirectionalLight(0xffffff, 1.2);
+    this.headlight.name = '__THREE_INSPECTOR_HEADLIGHT__';
+    (this.headlight as any).__isInspectorObject = true;
+    this.debugCamera.add(this.headlight);
+
+    this.ambientLight = new AmbientLight(0xffffff, 0.4);
+    this.ambientLight.name = '__THREE_INSPECTOR_AMBIENT__';
+    (this.ambientLight as any).__isInspectorObject = true;
+    this.debugCamera.add(this.ambientLight);
 
     try {
       this.controls = new OrbitControls(this.debugCamera, domElement);
@@ -80,10 +99,10 @@ export class DebugCameraManager {
         RIGHT: 2
       };
 
-      // Set initial orbit target 8 units in front of camera
+      // Set initial orbit target 6 units in front of camera
       const dir = new Vector3();
       this.debugCamera.getWorldDirection(dir);
-      this.controls.target.copy(this.debugCamera.position).addScaledVector(dir, 8);
+      this.controls.target.copy(this.debugCamera.position).addScaledVector(dir, 6);
       this.controls.update();
 
       // Prevent browser context menu on right-click pan
@@ -102,6 +121,18 @@ export class DebugCameraManager {
 
   public disable() {
     if (!this.isActive) return;
+
+    if (this.headlight && this.debugCamera) {
+      this.debugCamera.remove(this.headlight);
+      this.headlight.dispose?.();
+      this.headlight = null;
+    }
+
+    if (this.ambientLight && this.debugCamera) {
+      this.debugCamera.remove(this.ambientLight);
+      this.ambientLight.dispose?.();
+      this.ambientLight = null;
+    }
 
     if (this.canvas && this.onContextMenuBound) {
       this.canvas.removeEventListener('contextmenu', this.onContextMenuBound);

@@ -53,8 +53,9 @@ import { AnimationManager } from './animations';
   const animationManager = new AnimationManager();
 
   // Helper and Selection State
-  let currentHighlightHelper: any = null;
-  let currentHighlightTarget: any = null;
+  let selectedHighlightHelper: any = null;
+  let selectedHighlightTarget: any = null;
+  let hoverHelper: any = null;
   let activeSelectedUuid: string | null = null;
   let lastActiveCamera: any = null;
 
@@ -97,6 +98,19 @@ import { AnimationManager } from './animations';
       });
     } catch (e) {}
   });
+
+  // Check if an object or any of its ancestors is an internal inspector/helper object
+  function isInternalInspectorObject(obj: any): boolean {
+    if (!obj) return true;
+    let p = obj;
+    while (p) {
+      if (p.name && p.name.startsWith('__THREE_INSPECTOR_')) return true;
+      if (p.__isInspectorObject) return true;
+      if (p.isTransformControls || (p.type && p.type.includes('TransformControls'))) return true;
+      p = p.parent;
+    }
+    return false;
+  }
 
   function pinProperty(obj: any, propPath: string, value: any) {
     if (!obj || !obj.uuid) return;
@@ -230,7 +244,7 @@ import { AnimationManager } from './animations';
       let cam: any = null;
       try {
         scene.traverse((o: any) => {
-          if (o && o.isCamera && !o.__isInspectorCamera && !cam) cam = o;
+          if (o && o.isCamera && !isInternalInspectorObject(o) && !cam) cam = o;
         });
       } catch (e) {}
       if (cam) return cam;
@@ -252,8 +266,19 @@ import { AnimationManager } from './animations';
     return null;
   }
 
+  function getObjectScene(obj: any): any {
+    let p = obj;
+    while (p) {
+      if (p.isScene || registeredScenes.has(p)) return p;
+      p = p.parent;
+    }
+    return getActiveScene();
+  }
+
+  // Only real THREE.Scene instances are ever registered
   function registerScene(scene: any) {
-    if (!scene || !scene.isObject3D) return;
+    if (!scene || !scene.isScene) return;
+    if (isInternalInspectorObject(scene)) return;
     if (!registeredScenes.has(scene)) {
       registeredScenes.add(scene);
       indexSceneObjects(scene);
@@ -265,19 +290,21 @@ import { AnimationManager } from './animations';
   function indexSceneObjects(root: any) {
     try {
       root.traverse((obj: any) => {
-        if (obj && obj.uuid) {
+        if (!obj || isInternalInspectorObject(obj)) return;
+        if (obj.uuid) {
           uuidToObjectMap.set(obj.uuid, obj);
         }
-        if (obj?.geometry && obj.geometry.uuid) {
+        if (obj.geometry && obj.geometry.uuid && !isInternalInspectorObject(obj.geometry)) {
           allKnownGeometries.set(obj.geometry.uuid, obj.geometry);
         }
-        if (obj?.material) {
+        if (obj.material) {
           const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
           mats.forEach((m: any) => {
+            if (isInternalInspectorObject(m)) return;
             const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
             slots.forEach((s) => {
               const tex = m[s];
-              if (tex && tex.isTexture && tex.uuid) {
+              if (tex && tex.isTexture && tex.uuid && !isInternalInspectorObject(tex)) {
                 allKnownTextures.set(tex.uuid, tex);
               }
             });
@@ -298,7 +325,18 @@ import { AnimationManager } from './animations';
 
   function handleHookedRender(this: any, originalRender: any, scene: any, camera: any) {
     try {
-      if (scene) registerScene(scene);
+      // Validate whether this call is a true 3D scene render, or a postprocessing quad pass
+      const isMain3DScene = Boolean(scene && (scene.isScene === true || scene.type === 'Scene') && !isInternalInspectorObject(scene));
+      const isQuadPass = Boolean(camera && camera.isOrthographicCamera && camera.near === 0 && camera.far === 1);
+
+      // If it is a post-processing pass (e.g. UnrealBloomPass / OutputPass fullscreen quad):
+      // NEVER replace camera, NEVER add quad to registeredScenes, NEVER run wireframe!
+      if (!isMain3DScene || isQuadPass) {
+        return originalRender.call(this, scene, camera);
+      }
+
+      // True 3D Scene!
+      registerScene(scene);
       if (camera && !camera.__isInspectorCamera) {
         lastActiveCamera = camera;
       }
@@ -316,12 +354,10 @@ import { AnimationManager } from './animations';
 
       applyPinnedOverrides();
 
-      if (scene) {
-        if (isWireframeActive) {
-          scene.overrideMaterial = overrideWireframe;
-        } else if (scene.overrideMaterial === overrideWireframe) {
-          scene.overrideMaterial = null;
-        }
+      if (isWireframeActive) {
+        scene.overrideMaterial = overrideWireframe;
+      } else if (scene.overrideMaterial === overrideWireframe) {
+        scene.overrideMaterial = null;
       }
 
       tickRender(this);
@@ -388,16 +424,18 @@ import { AnimationManager } from './animations';
 
   function serializeNode(node: any, depth = 0): SerializedNode | null {
     if (!node || !node.isObject3D) return null;
-    if (node.name && node.name.startsWith('__THREE_INSPECTOR_')) return null;
+    if (isInternalInspectorObject(node)) return null;
 
     uuidToObjectMap.set(node.uuid, node);
 
     const children: SerializedNode[] = [];
     if (node.children && Array.isArray(node.children)) {
       for (const child of node.children) {
-        const serialized = serializeNode(child, depth + 1);
-        if (serialized) {
-          children.push(serialized);
+        if (!isInternalInspectorObject(child)) {
+          const serialized = serializeNode(child, depth + 1);
+          if (serialized) {
+            children.push(serialized);
+          }
         }
       }
     }
@@ -422,18 +460,24 @@ import { AnimationManager } from './animations';
     const geometryMap = new Map<string, CategoryGeometryItem>();
 
     for (const scene of registeredScenes) {
+      if (!scene || !scene.isScene || isInternalInspectorObject(scene)) continue;
+
       try {
         scene.traverse((obj: any) => {
-          if (!obj || !obj.isObject3D || (obj.name && obj.name.startsWith('__THREE_INSPECTOR_'))) return;
+          if (!obj || !obj.isObject3D || isInternalInspectorObject(obj)) return;
 
+          // Meshes & InstancedMeshes
           if (obj.isMesh || obj.isInstancedMesh) {
+            // Exclude fullscreen postprocessing quads
+            if (obj.geometry?.type === 'FullscreenTriangleGeometry') return;
+
             let verticesCount = 0;
             let facesCount = 0;
             let geoType = 'None';
             let matType = 'None';
             let matColor: string | undefined;
 
-            if (obj.geometry) {
+            if (obj.geometry && !isInternalInspectorObject(obj.geometry)) {
               geoType = obj.geometry.type || 'BufferGeometry';
               if (obj.geometry.attributes?.position) {
                 verticesCount = obj.geometry.attributes.position.count;
@@ -463,12 +507,13 @@ import { AnimationManager } from './animations';
 
             if (obj.material) {
               const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-              matType = mats.map((m: any) => m.type || 'Material').join(', ');
-              if (mats[0]?.color) {
-                matColor = colorToHex(mats[0].color);
+              const validMats = mats.filter((m: any) => m && !isInternalInspectorObject(m));
+              matType = validMats.map((m: any) => m.type || 'Material').join(', ');
+              if (validMats[0]?.color) {
+                matColor = colorToHex(validMats[0].color);
               }
 
-              mats.forEach((m: any) => {
+              validMats.forEach((m: any) => {
                 const matUuid = m.uuid || `mat-${obj.id}`;
                 if (!materialMap.has(matUuid)) {
                   materialMap.set(matUuid, {
@@ -488,7 +533,7 @@ import { AnimationManager } from './animations';
                 const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
                 slots.forEach((slot) => {
                   const tex = m[slot];
-                  if (tex && tex.isTexture) {
+                  if (tex && tex.isTexture && !isInternalInspectorObject(tex)) {
                     const texUuid = tex.uuid || `tex-${slot}-${matUuid}`;
                     const memBytes = MemoryAuditor.calculateTextureBytes(tex);
                     if (!textureMap.has(texUuid)) {
@@ -581,7 +626,7 @@ import { AnimationManager } from './animations';
     const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'envMap'];
     slots.forEach((s) => {
       const tex = mat[s];
-      if (tex && tex.isTexture) {
+      if (tex && tex.isTexture && !isInternalInspectorObject(tex)) {
         textureSlots.push({
           slot: s,
           uuid: tex.uuid,
@@ -627,7 +672,7 @@ import { AnimationManager } from './animations';
       } : { x: 0, y: 0, z: 0 };
 
       let geometry: GeometryInfo | null = null;
-      if (obj.geometry) {
+      if (obj.geometry && !isInternalInspectorObject(obj.geometry)) {
         const geo = obj.geometry;
         let verticesCount = 0;
         let facesCount = 0;
@@ -657,8 +702,8 @@ import { AnimationManager } from './animations';
       let material: MaterialInfo | MaterialInfo[] | null = null;
       if (obj.material) {
         if (Array.isArray(obj.material)) {
-          material = obj.material.map(extractMaterialInfo);
-        } else {
+          material = obj.material.filter((m: any) => !isInternalInspectorObject(m)).map(extractMaterialInfo);
+        } else if (!isInternalInspectorObject(obj.material)) {
           material = extractMaterialInfo(obj.material);
         }
       }
@@ -724,16 +769,17 @@ import { AnimationManager } from './animations';
     }
   }
 
-  function setHighlight(uuid: string | null) {
-    if (currentHighlightHelper) {
-      if (currentHighlightHelper.parent) {
-        currentHighlightHelper.parent.remove(currentHighlightHelper);
+  // Set selected object (attaches TransformControls gizmo and selection box)
+  function setSelectedHighlight(uuid: string | null) {
+    if (selectedHighlightHelper) {
+      if (selectedHighlightHelper.parent) {
+        selectedHighlightHelper.parent.remove(selectedHighlightHelper);
       }
-      if (typeof currentHighlightHelper.dispose === 'function') {
-        currentHighlightHelper.dispose();
+      if (typeof selectedHighlightHelper.dispose === 'function') {
+        selectedHighlightHelper.dispose();
       }
-      currentHighlightHelper = null;
-      currentHighlightTarget = null;
+      selectedHighlightHelper = null;
+      selectedHighlightTarget = null;
     }
 
     if (!uuid) {
@@ -749,18 +795,10 @@ import { AnimationManager } from './animations';
 
     const cam = getActiveCamera();
     const canvas = getActiveCanvas();
-    let targetScene = getActiveScene();
-    let p = target;
-    while (p) {
-      if (p.isScene || registeredScenes.has(p)) {
-        targetScene = p;
-        break;
-      }
-      p = p.parent;
-    }
+    const scene = getObjectScene(target);
 
-    if (cam && canvas && targetScene) {
-      gizmoManager.attach(target, cam, canvas, targetScene);
+    if (cam && canvas && scene) {
+      gizmoManager.attach(target, cam, canvas, scene);
     }
 
     try {
@@ -795,25 +833,67 @@ import { AnimationManager } from './animations';
       }
 
       helper.name = '__THREE_INSPECTOR_HELPER__';
+      helper.__isInspectorObject = true;
 
-      let rootScene = Array.from(registeredScenes)[0];
-      let sp = target;
-      while (sp) {
-        if (sp.isScene || registeredScenes.has(sp)) {
-          rootScene = sp;
-          break;
-        }
-        sp = sp.parent;
+      if (scene) {
+        scene.add(helper);
+        selectedHighlightHelper = helper;
+        selectedHighlightTarget = target;
       }
+    } catch (e) {}
+  }
 
-      if (rootScene) {
-        rootScene.add(helper);
-        currentHighlightHelper = helper;
-        currentHighlightTarget = target;
+  // Lightweight hover highlight (NEVER attaches gizmo, zero performance cost)
+  function setHoverHighlight(uuid: string | null) {
+    if (hoverHelper) {
+      if (hoverHelper.parent) {
+        hoverHelper.parent.remove(hoverHelper);
       }
-    } catch (e) {
-      console.warn('[Three.js Inspector] Failed to create highlight helper:', e);
+      if (typeof hoverHelper.dispose === 'function') {
+        hoverHelper.dispose();
+      }
+      hoverHelper = null;
     }
+
+    if (!uuid || uuid === activeSelectedUuid) return;
+
+    const target = findObjectByUuid(uuid);
+    if (!target) return;
+
+    try {
+      let helper: any = null;
+
+      if ((target.isMesh || target.isInstancedMesh) && target.geometry) {
+        helper = new BoxHelper(target, 0x38bdf8);
+        helper.material.depthTest = false;
+        helper.material.transparent = true;
+        helper.material.opacity = 0.5;
+        helper.renderOrder = 999998;
+      } else {
+        const worldPos = new Vector3();
+        if (typeof target.getWorldPosition === 'function') {
+          target.getWorldPosition(worldPos);
+        } else if (target.position) {
+          worldPos.copy(target.position);
+        }
+        const box = new Box3();
+        box.setFromCenterAndSize(worldPos, new Vector3(1, 1, 1));
+        helper = new Box3Helper(box, new Color(0x38bdf8));
+        helper.material.depthTest = false;
+        helper.material.transparent = true;
+        helper.material.opacity = 0.5;
+        helper.renderOrder = 999998;
+      }
+
+      helper.name = '__THREE_INSPECTOR_HOVER__';
+      helper.__isInspectorObject = true;
+
+      const scene = getObjectScene(target);
+      if (scene) {
+        scene.add(helper);
+        hoverHelper = helper;
+      }
+    } catch (e) {}
   }
 
   function updateObjectProperty(payload: UpdatePropertyPayload) {
@@ -911,8 +991,8 @@ import { AnimationManager } from './animations';
         }
       }
 
-      if (currentHighlightHelper && typeof currentHighlightHelper.update === 'function') {
-        currentHighlightHelper.update();
+      if (selectedHighlightHelper && typeof selectedHighlightHelper.update === 'function') {
+        selectedHighlightHelper.update();
       }
 
       const updatedDetails = extractObjectDetails(obj);
@@ -993,23 +1073,22 @@ import { AnimationManager } from './animations';
         emit('STATS_UPDATE', stats);
       }
 
-      if (currentHighlightHelper && currentHighlightTarget) {
-        if (typeof currentHighlightHelper.update === 'function') {
-          currentHighlightHelper.update();
-        } else if (currentHighlightHelper.box) {
+      if (selectedHighlightHelper && selectedHighlightTarget) {
+        if (typeof selectedHighlightHelper.update === 'function') {
+          selectedHighlightHelper.update();
+        } else if (selectedHighlightHelper.box) {
           const worldPos = new Vector3();
-          if (typeof currentHighlightTarget.getWorldPosition === 'function') {
-            currentHighlightTarget.getWorldPosition(worldPos);
-          } else if (currentHighlightTarget.position) {
-            worldPos.copy(currentHighlightTarget.position);
+          if (typeof selectedHighlightTarget.getWorldPosition === 'function') {
+            selectedHighlightTarget.getWorldPosition(worldPos);
+          } else if (selectedHighlightTarget.position) {
+            worldPos.copy(selectedHighlightTarget.position);
           }
-          currentHighlightHelper.box.setFromCenterAndSize(worldPos, new Vector3(1.2, 1.2, 1.2));
+          selectedHighlightHelper.box.setFromCenterAndSize(worldPos, new Vector3(1.2, 1.2, 1.2));
         }
       }
     } catch (e) {}
   }
 
-  // Hook prototype if THREE.WebGLRenderer is globally accessible
   function hookRendererPrototype() {
     const THREE = (window as any).THREE;
     if (THREE && THREE.WebGLRenderer && !THREE.WebGLRenderer.__INSPECTOR_HOOKED__) {
@@ -1055,7 +1134,7 @@ import { AnimationManager } from './animations';
           activeSelectedUuid = payload.uuid;
           const obj = findObjectByUuid(payload.uuid);
           if (obj) {
-            setHighlight(payload.uuid);
+            setSelectedHighlight(payload.uuid);
             const details = extractObjectDetails(obj);
             if (details) emit('OBJECT_DETAILS_DATA', details);
           }
@@ -1063,7 +1142,7 @@ import { AnimationManager } from './animations';
         break;
 
       case 'HIGHLIGHT_OBJECT':
-        setHighlight(payload?.uuid || activeSelectedUuid);
+        setHoverHighlight(payload?.uuid || null);
         break;
 
       case 'UPDATE_PROPERTY':
@@ -1154,7 +1233,7 @@ import { AnimationManager } from './animations';
         devtools.addEventListener('observe', (event: any) => {
           const detail = event?.detail;
           if (!detail) return;
-          if (detail.isScene || (detail.isObject3D && detail.children)) {
+          if (detail.isScene && !isInternalInspectorObject(detail)) {
             registerScene(detail);
           }
           if (detail.render && (detail.domElement || detail.capabilities)) {
@@ -1214,6 +1293,7 @@ import { AnimationManager } from './animations';
             return debugCameraManager.isEnabled();
           },
           isDebugCameraActive: () => debugCameraManager.isEnabled(),
+          setHoverHighlight,
           downloadTexture: (uuid: string) => {
             const tex = allKnownTextures.get(uuid);
             if (tex) ExporterManager.downloadTexture(tex);
@@ -1245,12 +1325,12 @@ import { AnimationManager } from './animations';
             activeSelectedUuid = uuid;
             const obj = findObjectByUuid(uuid);
             if (obj) {
-              setHighlight(uuid);
+              setSelectedHighlight(uuid);
               return extractObjectDetails(obj);
             }
             return null;
           },
-          setHighlight,
+          setSelectedHighlight,
           getScenes: () => Array.from(registeredScenes),
           getRenderers: () => Array.from(registeredRenderers),
           refresh: () => {
@@ -1270,14 +1350,13 @@ import { AnimationManager } from './animations';
     checkCount++;
     hookRendererPrototype();
 
-    if ((window as any).scene && (window as any).scene.isObject3D) {
+    if ((window as any).scene && (window as any).scene.isScene) {
       registerScene((window as any).scene);
     }
     if ((window as any).renderer && (window as any).renderer.render) {
       registerRenderer((window as any).renderer);
     }
 
-    // Inspect active canvases
     const canvases = document.querySelectorAll('canvas');
     canvases.forEach((c: any) => {
       if (c.__threeRenderer) {

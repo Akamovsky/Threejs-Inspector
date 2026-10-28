@@ -204,14 +204,20 @@ export function selectObject(uuid: string) {
   send('SELECT_OBJECT', { uuid });
 }
 
+let hoverDebounceTimer: any = null;
+
 export function highlightObject(uuid: string | null) {
-  const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.setHighlight(${JSON.stringify(uuid)});
-    }
-  `;
-  executeInPage(script);
-  send('HIGHLIGHT_OBJECT', { uuid });
+  if (hoverDebounceTimer) {
+    clearTimeout(hoverDebounceTimer);
+  }
+  hoverDebounceTimer = setTimeout(() => {
+    const script = `
+      if (window.__THREE_INSPECTOR__) {
+        window.__THREE_INSPECTOR__.setHoverHighlight(${JSON.stringify(uuid)});
+      }
+    `;
+    executeInPage(script);
+  }, 40);
 }
 
 export function updateProperty(uuid: string, path: string[], value: any) {
