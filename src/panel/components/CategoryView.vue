@@ -4,7 +4,8 @@ import {
   state,
   selectObject,
   highlightObject,
-  updateProperty
+  updateProperty,
+  downloadTexture
 } from '../bridge';
 import {
   Box,
@@ -17,7 +18,8 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
-  Search
+  Search,
+  Download
 } from 'lucide-vue-next';
 
 // Collapsible category sections state
@@ -325,11 +327,21 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
               @mouseleave="handleHover(null)"
             >
               <img v-if="tex.dataUrl" :src="tex.dataUrl" class="cat-tex-thumb" />
+              <div v-else class="cat-tex-placeholder">
+                <ImageIcon :size="12" />
+              </div>
               <span class="item-name" :title="tex.name">{{ tex.name }}</span>
               <span class="type-badge">{{ tex.type }}</span>
               <span v-if="tex.width && tex.height" class="res-badge">
                 {{ tex.width }}x{{ tex.height }}
               </span>
+              <button
+                class="cat-dl-btn"
+                @click.stop="downloadTexture(tex.uuid)"
+                title="Download Texture (PNG)"
+              >
+                <Download :size="10" />
+              </button>
             </div>
             <div v-if="filteredTextures.length === 0" class="empty-cat">No textures found</div>
           </div>
@@ -526,6 +538,40 @@ function toggleLightVisibility(e: MouseEvent, light: any) {
   object-fit: cover;
   flex-shrink: 0;
   border: 1px solid var(--border-color);
+}
+
+.cat-tex-placeholder {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
+}
+
+.cat-dl-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.cat-dl-btn:hover {
+  background: var(--bg-hover);
+  color: #38bdf8;
+  border-color: #38bdf8;
 }
 
 .geo-badge,

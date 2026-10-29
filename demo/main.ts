@@ -248,6 +248,28 @@ const texturedGroup = new THREE.Group();
 texturedGroup.name = 'Textured Artifacts Group';
 scene.add(texturedGroup);
 
+// TextureLoader for external image file (cyber-panel.png)
+const textureLoader = new THREE.TextureLoader();
+const cyberImageTex = textureLoader.load('/textures/cyber-panel.png');
+cyberImageTex.name = 'Cyber Panel Image (PNG)';
+cyberImageTex.colorSpace = THREE.SRGBColorSpace;
+
+const billboardGeo = new THREE.PlaneGeometry(3.5, 3.5);
+billboardGeo.name = 'Holo Display Plane';
+const billboardMat = new THREE.MeshStandardMaterial({
+  map: cyberImageTex,
+  roughness: 0.2,
+  metalness: 0.5,
+  side: THREE.DoubleSide
+});
+billboardMat.name = 'Holo Display Material';
+const billboard = new THREE.Mesh(billboardGeo, billboardMat);
+billboard.name = 'Cyber Hologram Screen';
+billboard.position.set(-6, 3, 2);
+billboard.rotation.y = Math.PI / 4;
+billboard.castShadow = true;
+texturedGroup.add(billboard);
+
 // Rune Monolith
 const runeTex = createRuneTexture();
 const roughnessTex = createNoiseRoughnessTexture();

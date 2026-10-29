@@ -624,7 +624,7 @@ import { AnimationManager } from './animations';
                           height: tex.image?.height,
                           format: tex.format ? String(tex.format) : undefined,
                           mapping: tex.mapping ? String(tex.mapping) : undefined,
-                          dataUrl: undefined,
+                          dataUrl: ExporterManager.getTextureThumbnail(tex),
                           memoryBytes: memBytes,
                           linkedObjectUuids: [obj.uuid]
                         });
@@ -713,7 +713,7 @@ import { AnimationManager } from './animations';
           slot: s,
           uuid: tex.uuid,
           name: tex.name || s,
-          dataUrl: (typeof tex.image?.src === 'string' && tex.image.src.startsWith('data:')) ? tex.image.src : undefined,
+          dataUrl: ExporterManager.getTextureThumbnail(tex),
           width: tex.image?.width,
           height: tex.image?.height,
           format: tex.format ? String(tex.format) : undefined,

@@ -17,6 +17,8 @@ export class DebugCameraManager {
     wasActiveBefore: boolean;
   } | null = null;
   private isFocused = false;
+  private guideOverlayElement: HTMLElement | null = null;
+  private hasSeenGuide = false;
 
   public isEnabled(): boolean {
     return this.isActive;
@@ -117,6 +119,97 @@ export class DebugCameraManager {
     }
 
     this.isActive = true;
+    this.showGuideHUD();
+  }
+
+  private showGuideHUD() {
+    if (this.guideOverlayElement) {
+      this.guideOverlayElement.remove();
+      this.guideOverlayElement = null;
+    }
+
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('__THREE_INSPECTOR_SEEN_DEBUG_CAM_GUIDE__')) {
+        this.hasSeenGuide = true;
+      }
+    } catch (e) {}
+
+    const el = document.createElement('div');
+    el.id = '__three_inspector_debug_cam_guide__';
+    el.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.94);
+      color: #f8fafc;
+      padding: 12px 18px;
+      border-radius: 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      font-size: 12px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(56, 189, 248, 0.3);
+      z-index: 9999999;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      pointer-events: auto;
+      backdrop-filter: blur(8px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    `;
+
+    el.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 8px #38bdf8;"></span>
+        <strong style="color: #38bdf8; font-size: 12px; letter-spacing: 0.5px;">BLENDER VIEWPORT CONTROLS</strong>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; color: #cbd5e1; font-size: 11px;">
+        <span><kbd style="background: rgba(255,255,255,0.1); padding: 2px 5px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.2); font-family: monospace;">Left Click</kbd> Orbit</span>
+        <span><kbd style="background: rgba(255,255,255,0.1); padding: 2px 5px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.2); font-family: monospace;">Scroll</kbd> Zoom</span>
+        <span><kbd style="background: rgba(255,255,255,0.1); padding: 2px 5px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.2); font-family: monospace;">Right Click</kbd> Pan</span>
+      </div>
+      <button id="__three_inspector_guide_dismiss__" style="
+        background: rgba(56, 189, 248, 0.2);
+        border: 1px solid #38bdf8;
+        color: #38bdf8;
+        border-radius: 4px;
+        font-size: 11px;
+        padding: 3px 8px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: background 0.15s ease;
+      ">Got it</button>
+    `;
+
+    document.body.appendChild(el);
+    this.guideOverlayElement = el;
+
+    const dismissBtn = el.querySelector('#__three_inspector_guide_dismiss__') as HTMLElement;
+    const hideGuide = () => {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('__THREE_INSPECTOR_SEEN_DEBUG_CAM_GUIDE__', 'true');
+        }
+      } catch (e) {}
+      if (this.guideOverlayElement) {
+        this.guideOverlayElement.style.opacity = '0';
+        this.guideOverlayElement.style.transform = 'translateX(-50%) translateY(8px)';
+        setTimeout(() => {
+          if (this.guideOverlayElement) {
+            this.guideOverlayElement.remove();
+            this.guideOverlayElement = null;
+          }
+        }, 300);
+      }
+    };
+
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', hideGuide);
+    }
+
+    // Auto fade out after 8 seconds
+    setTimeout(() => {
+      hideGuide();
+    }, 8000);
   }
 
   public disable() {
@@ -144,6 +237,11 @@ export class DebugCameraManager {
         this.controls.dispose();
       } catch (e) {}
       this.controls = null;
+    }
+
+    if (this.guideOverlayElement) {
+      this.guideOverlayElement.remove();
+      this.guideOverlayElement = null;
     }
 
     this.debugCamera = null;

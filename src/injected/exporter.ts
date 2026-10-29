@@ -75,13 +75,18 @@ export class ExporterManager {
         return img.src;
       }
 
+      // Check if image is loaded (for HTMLImageElement)
+      if (typeof HTMLImageElement !== 'undefined' && img instanceof HTMLImageElement && !img.complete) {
+        return img.src || undefined;
+      }
+
       // Canvas / ImageBitmap / HTMLImageElement
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) return undefined;
 
-      const w = img.width || img.videoWidth || 64;
-      const h = img.height || img.videoHeight || 64;
+      const w = img.width || img.videoWidth || (img.naturalWidth || 64);
+      const h = img.height || img.videoHeight || (img.naturalHeight || 64);
       const scale = Math.min(1, maxSize / Math.max(w, h));
       canvas.width = Math.max(16, Math.round(w * scale));
       canvas.height = Math.max(16, Math.round(h * scale));
@@ -89,6 +94,9 @@ export class ExporterManager {
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       return canvas.toDataURL('image/png');
     } catch (e) {
+      if (typeof texture.image?.src === 'string') {
+        return texture.image.src;
+      }
       return undefined;
     }
   }

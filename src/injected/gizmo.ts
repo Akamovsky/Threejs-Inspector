@@ -88,8 +88,21 @@ export class GizmoManager {
           if (!this.transformControls || !this.transformControls.enabled || this.currentMode === 'none') {
             return;
           }
+          // Compute pointer coordinate in normalized device coordinates
+          const rect = domElement.getBoundingClientRect();
+          const pointer = {
+            x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
+            button: e.button
+          };
+          if (typeof (this.transformControls as any).pointerHover === 'function') {
+            (this.transformControls as any).pointerHover(pointer);
+          }
           if (this.transformControls.axis !== null) {
             e.stopPropagation();
+            if (typeof e.stopImmediatePropagation === 'function') {
+              e.stopImmediatePropagation();
+            }
           }
         },
         { capture: true }
