@@ -1,13 +1,78 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { state, requestAnimations, controlAnimation } from '../bridge';
 import { Play, Pause, Square, FastForward, Film, RefreshCw } from 'lucide-vue-next';
 
 const animations = computed(() => state.animations);
+const seekingClips = ref<Record<string, boolean>>({});
+
+let pollInterval: any = null;
+
+function startPolling() {
+  if (pollInterval) return;
+  requestAnimations();
+  pollInterval = setInterval(() => {
+    if (state.activeTab === 'animations' && Object.keys(seekingClips.value).length === 0) {
+      requestAnimations();
+    }
+  }, 150);
+}
+
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+}
+
+watch(
+  () => state.activeTab,
+  (tab) => {
+    if (tab === 'animations') {
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  },
+  { immediate: true }
+);
 
 onMounted(() => {
-  requestAnimations();
+  startPolling();
 });
+
+onUnmounted(() => {
+  stopPolling();
+});
+
+function handleSeekInput(mixerId: string, clipName: string, e: Event) {
+  const val = +((e.target as HTMLInputElement).value);
+  seekingClips.value[`${mixerId}:${clipName}`] = true;
+
+  // Optimistically update the UI time readout immediately
+  const mixer = state.animations.find((m) => m.id === mixerId);
+  const clip = mixer?.clips.find((c) => c.name === clipName);
+  if (clip) {
+    clip.time = +val.toFixed(2);
+  }
+
+  controlAnimation(mixerId, clipName, 'seek', val);
+}
+
+function handleSeekChange(mixerId: string, clipName: string) {
+  setTimeout(() => {
+    delete seekingClips.value[`${mixerId}:${clipName}`];
+  }, 100);
+}
+
+function handleSpeedChange(mixerId: string, clipName: string, speed: number) {
+  const mixer = state.animations.find((m) => m.id === mixerId);
+  const clip = mixer?.clips.find((c) => c.name === clipName);
+  if (clip) {
+    clip.speed = speed;
+  }
+  controlAnimation(mixerId, clipName, 'speed', speed);
+}
 </script>
 
 <template>
@@ -47,6 +112,7 @@ onMounted(() => {
             <div class="clip-actions">
               <button
                 class="ctrl-btn play"
+                :class="{ active: clip.isPlaying }"
                 @click="controlAnimation(mixer.id, clip.name, 'play')"
                 title="Play animation"
               >
@@ -54,6 +120,7 @@ onMounted(() => {
               </button>
               <button
                 class="ctrl-btn pause"
+                :class="{ active: !clip.isPlaying && clip.time > 0 }"
                 @click="controlAnimation(mixer.id, clip.name, 'pause')"
                 title="Pause animation"
               >
@@ -76,7 +143,8 @@ onMounted(() => {
                 :max="clip.duration || 10"
                 step="0.05"
                 :value="clip.time"
-                @input="controlAnimation(mixer.id, clip.name, 'seek', +($event.target as HTMLInputElement).value)"
+                @input="handleSeekInput(mixer.id, clip.name, $event)"
+                @change="handleSeekChange(mixer.id, clip.name)"
                 class="timeline-slider"
               />
               <span class="time-readout">{{ clip.time }}s / {{ clip.duration }}s</span>
@@ -90,8 +158,8 @@ onMounted(() => {
                 v-for="s in [0.25, 0.5, 1, 1.5, 2]"
                 :key="s"
                 class="speed-pill"
-                :class="{ active: clip.speed === s }"
-                @click="controlAnimation(mixer.id, clip.name, 'speed', s)"
+                :class="{ active: Math.abs((clip.speed || 1) - s) < 0.01 }"
+                @click="handleSpeedChange(mixer.id, clip.name, s)"
               >
                 {{ s }}x
               </button>
@@ -239,6 +307,18 @@ onMounted(() => {
 
 .ctrl-btn:hover {
   background: var(--bg-hover);
+}
+
+.ctrl-btn.play.active {
+  color: #4ade80;
+  border-color: #4ade80;
+  background: rgba(74, 222, 128, 0.15);
+}
+
+.ctrl-btn.pause.active {
+  color: #facc15;
+  border-color: #facc15;
+  background: rgba(250, 204, 21, 0.15);
 }
 
 .ctrl-btn.play:hover {

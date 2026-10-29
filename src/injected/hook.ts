@@ -698,6 +698,8 @@ import { AnimationManager } from './animations';
       }
       emit('SCENE_GRAPH_DATA', { scenes });
       emit('CATEGORIZED_DATA', extractCategorizedData());
+      animationManager.scanScenesForMixers(registeredScenes);
+      emit('ANIMATION_DATA', animationManager.getMixersData());
     } catch (e) {}
   }
 
@@ -1263,6 +1265,7 @@ import { AnimationManager } from './animations';
       };
       emitDetection();
     }
+    animationManager.hookMixerPrototype();
   }
 
   window.addEventListener('message', (event) => {
@@ -1355,7 +1358,8 @@ import { AnimationManager } from './animations';
 
       case 'CONTROL_ANIMATION':
         if (payload) {
-          animationManager.control(payload.mixerId, payload.clipName, payload.action, payload.value);
+          const data = animationManager.control(payload.mixerId, payload.clipName, payload.action, payload.value);
+          emit('ANIMATION_DATA', data);
         }
         break;
 
@@ -1491,7 +1495,9 @@ import { AnimationManager } from './animations';
             return animationManager.getMixersData();
           },
           controlAnimation: (mixerId: string, clipName: string, action: any, value?: number) => {
-            animationManager.control(mixerId, clipName, action, value);
+            const data = animationManager.control(mixerId, clipName, action, value);
+            emit('ANIMATION_DATA', data);
+            return data;
           },
           selectObject: (uuid: string | null) => {
             activeSelectedUuid = uuid || null;
@@ -1520,8 +1526,10 @@ import { AnimationManager } from './animations';
           getScenes: () => Array.from(registeredScenes),
           getRenderers: () => Array.from(registeredRenderers),
           refresh: () => {
+            animationManager.scanScenesForMixers(registeredScenes);
             emitDetection();
             emitSceneGraph();
+            emit('ANIMATION_DATA', animationManager.getMixersData());
           }
         };
       } catch {}
@@ -1541,6 +1549,10 @@ import { AnimationManager } from './animations';
     }
     if ((window as any).renderer && (window as any).renderer.render) {
       registerRenderer((window as any).renderer);
+    }
+
+    if (registeredScenes.size > 0) {
+      animationManager.scanScenesForMixers(registeredScenes);
     }
 
     const canvases = document.querySelectorAll('canvas');

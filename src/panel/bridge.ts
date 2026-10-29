@@ -124,7 +124,7 @@ function handleMessage(message: InspectorMessage) {
       break;
 
     case 'ANIMATION_DATA':
-      if (message.payload) {
+      if (Array.isArray(message.payload)) {
         state.animations = message.payload;
       }
       break;
@@ -401,11 +401,18 @@ export function requestAnimations() {
 
 export function controlAnimation(mixerId: string, clipName: string, action: 'play' | 'pause' | 'stop' | 'seek' | 'speed', value?: number) {
   const script = `
-    if (window.__THREE_INSPECTOR__) {
-      window.__THREE_INSPECTOR__.controlAnimation(${JSON.stringify(mixerId)}, ${JSON.stringify(clipName)}, ${JSON.stringify(action)}, ${JSON.stringify(value)});
-    }
+    (function() {
+      if (window.__THREE_INSPECTOR__) {
+        return window.__THREE_INSPECTOR__.controlAnimation(${JSON.stringify(mixerId)}, ${JSON.stringify(clipName)}, ${JSON.stringify(action)}, ${JSON.stringify(value)});
+      }
+      return null;
+    })()
   `;
-  executeInPage(script);
+  executeInPage(script, (data) => {
+    if (Array.isArray(data)) {
+      state.animations = data;
+    }
+  });
   send('CONTROL_ANIMATION', { mixerId, clipName, action, value });
 }
 
@@ -488,7 +495,8 @@ export function refresh() {
         window.__THREE_INSPECTOR__.refresh();
         return {
           categories: typeof window.__THREE_INSPECTOR__.getCategorizedData === 'function' ? window.__THREE_INSPECTOR__.getCategorizedData() : null,
-          scenes: typeof window.__THREE_INSPECTOR__.getSceneGraph === 'function' ? window.__THREE_INSPECTOR__.getSceneGraph() : null
+          scenes: typeof window.__THREE_INSPECTOR__.getSceneGraph === 'function' ? window.__THREE_INSPECTOR__.getSceneGraph() : null,
+          animations: typeof window.__THREE_INSPECTOR__.getAnimations === 'function' ? window.__THREE_INSPECTOR__.getAnimations() : []
         };
       }
       return null;
@@ -502,6 +510,10 @@ export function refresh() {
       state.scenes = data.scenes;
       state.statusMessage = `Loaded ${state.scenes.length} scene(s)`;
     }
+    if (Array.isArray(data?.animations) && data.animations.length > 0) {
+      state.animations = data.animations;
+    }
   });
   send('REQUEST_SCENE_GRAPH');
+  send('REQUEST_ANIMATIONS');
 }
