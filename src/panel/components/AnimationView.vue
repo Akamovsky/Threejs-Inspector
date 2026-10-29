@@ -12,7 +12,7 @@ function startPolling() {
   if (pollInterval) return;
   requestAnimations();
   pollInterval = setInterval(() => {
-    if (state.activeTab === 'animations' && Object.keys(seekingClips.value).length === 0) {
+    if (state.activeTab === 'animations') {
       requestAnimations();
     }
   }, 150);
@@ -47,7 +47,9 @@ onUnmounted(() => {
 
 function handleSeekInput(mixerId: string, clipName: string, e: Event) {
   const val = +((e.target as HTMLInputElement).value);
-  seekingClips.value[`${mixerId}:${clipName}`] = true;
+  const key = `${mixerId}:${clipName}`;
+  seekingClips.value[key] = true;
+  state.seekingClipKey = key;
 
   // Optimistically update the UI time readout immediately
   const mixer = state.animations.find((m) => m.id === mixerId);
@@ -62,6 +64,9 @@ function handleSeekInput(mixerId: string, clipName: string, e: Event) {
 function handleSeekChange(mixerId: string, clipName: string) {
   setTimeout(() => {
     delete seekingClips.value[`${mixerId}:${clipName}`];
+    if (state.seekingClipKey === `${mixerId}:${clipName}`) {
+      state.seekingClipKey = null;
+    }
   }, 100);
 }
 

@@ -198,9 +198,11 @@ export class AnimationManager {
             const clamped = Math.max(0, Math.min(value, clipDur));
             act.time = clamped;
             act.paused = true;
-            // Force mixer to evaluate properties at the scrubbed timestamp immediately
+            // Evaluate this action at the scrubbed time without resetting or halting other running actions
             try {
-              if (typeof targetMixer.update === 'function') {
+              if (typeof act._update === 'function') {
+                act._update(0);
+              } else if (typeof targetMixer.update === 'function') {
                 targetMixer.update(0);
               }
             } catch (e) {}

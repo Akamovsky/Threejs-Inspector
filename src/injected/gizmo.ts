@@ -39,6 +39,65 @@ export class GizmoManager {
         this.transformControls.size = 0.85;
         this.transformControls.setMode(this.currentMode === 'none' ? 'translate' : this.currentMode);
 
+        const onHandlePointerDown = (event: PointerEvent) => {
+          if (!this.transformControls || !this.transformControls.enabled || this.currentMode === 'none') return;
+          const rect = domElement.getBoundingClientRect();
+          const pointer = {
+            x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+            y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
+            button: event.button
+          };
+          if (typeof (this.transformControls as any).pointerHover === 'function') {
+            (this.transformControls as any).pointerHover(pointer);
+          }
+          if (this.transformControls.axis !== null) {
+            event.stopPropagation();
+            if (typeof (this.transformControls as any).pointerDown === 'function') {
+              (this.transformControls as any).pointerDown(pointer);
+            }
+          }
+        };
+
+        const onHandlePointerMove = (event: PointerEvent) => {
+          if (!this.transformControls || !this.transformControls.enabled || this.currentMode === 'none') return;
+          const rect = domElement.getBoundingClientRect();
+          const pointer = {
+            x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+            y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
+            button: event.button
+          };
+          if (this.transformControls.dragging) {
+            event.stopPropagation();
+            if (typeof (this.transformControls as any).pointerMove === 'function') {
+              (this.transformControls as any).pointerMove(pointer);
+            }
+          } else {
+            if (typeof (this.transformControls as any).pointerHover === 'function') {
+              (this.transformControls as any).pointerHover(pointer);
+            }
+          }
+        };
+
+        const onHandlePointerUp = (event: PointerEvent) => {
+          if (!this.transformControls || !this.transformControls.enabled || this.currentMode === 'none') return;
+          if (this.transformControls.dragging) {
+            event.stopPropagation();
+            const rect = domElement.getBoundingClientRect();
+            const pointer = {
+              x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+              y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
+              button: event.button
+            };
+            if (typeof (this.transformControls as any).pointerUp === 'function') {
+              (this.transformControls as any).pointerUp(pointer);
+            }
+          }
+        };
+
+        domElement.addEventListener('pointerdown', onHandlePointerDown, { capture: true });
+        domElement.addEventListener('pointermove', onHandlePointerMove, { capture: true });
+        domElement.addEventListener('pointerup', onHandlePointerUp, { capture: true });
+
         this.transformControls.addEventListener('objectChange', () => {
           if (this.targetObject && this.onTransformChange) {
             try {
@@ -76,37 +135,6 @@ export class GizmoManager {
           this.transformControls.connect();
         } catch (e) {}
       }
-    }
-
-    // Intercept capture-phase pointerdown on canvas so that clicks/drags on gizmo handles
-    // do not bubble into the game engine's pointer-lock or mouse-look handlers
-    if (domElement && this.hookedDomElement !== domElement) {
-      this.hookedDomElement = domElement;
-      domElement.addEventListener(
-        'pointerdown',
-        (e: PointerEvent) => {
-          if (!this.transformControls || !this.transformControls.enabled || this.currentMode === 'none') {
-            return;
-          }
-          // Compute pointer coordinate in normalized device coordinates
-          const rect = domElement.getBoundingClientRect();
-          const pointer = {
-            x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
-            y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
-            button: e.button
-          };
-          if (typeof (this.transformControls as any).pointerHover === 'function') {
-            (this.transformControls as any).pointerHover(pointer);
-          }
-          if (this.transformControls.axis !== null) {
-            e.stopPropagation();
-            if (typeof e.stopImmediatePropagation === 'function') {
-              e.stopImmediatePropagation();
-            }
-          }
-        },
-        { capture: true }
-      );
     }
   }
 

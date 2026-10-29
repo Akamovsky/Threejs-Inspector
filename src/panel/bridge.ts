@@ -34,6 +34,7 @@ export const state = reactive({
   lockedTransformUuids: new Set<string>(),
   filterQuery: '',
   activeTab: 'inspector' as 'inspector' | 'stats' | 'animations' | 'edits',
+  seekingClipKey: null as string | null,
   statusMessage: 'Waiting for Three.js scene...'
 });
 
@@ -125,7 +126,28 @@ function handleMessage(message: InspectorMessage) {
 
     case 'ANIMATION_DATA':
       if (Array.isArray(message.payload)) {
-        state.animations = message.payload;
+        if (!state.seekingClipKey) {
+          state.animations = message.payload;
+        } else {
+          // Update all clips except the one currently being dragged by the user
+          message.payload.forEach((newMixer: any) => {
+            const existingMixer = state.animations.find((m) => m.id === newMixer.id);
+            if (!existingMixer) return;
+            newMixer.clips.forEach((newClip: any) => {
+              const key = `${newMixer.id}:${newClip.name}`;
+              if (key === state.seekingClipKey) {
+                // Keep user's active drag value
+                return;
+              }
+              const existingClip = existingMixer.clips.find((c) => c.name === newClip.name);
+              if (existingClip) {
+                existingClip.time = newClip.time;
+                existingClip.isPlaying = newClip.isPlaying;
+                existingClip.speed = newClip.speed;
+              }
+            });
+          });
+        }
       }
       break;
 
