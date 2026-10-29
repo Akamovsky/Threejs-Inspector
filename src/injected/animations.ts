@@ -197,13 +197,15 @@ export class AnimationManager {
             const clipDur = (act.getClip ? act.getClip()?.duration : null) || 100;
             const clamped = Math.max(0, Math.min(value, clipDur));
             act.time = clamped;
-            act.paused = true;
-            // Evaluate this action at the scrubbed time without resetting or halting other running actions
+            // Evaluate only this action's tracks at the scrubbed time without resetting or halting sibling actions
             try {
-              if (typeof act._update === 'function') {
-                act._update(0);
-              } else if (typeof targetMixer.update === 'function') {
-                targetMixer.update(0);
+              if (act._interpolants && act._propertyBindings) {
+                for (let j = 0; j < act._interpolants.length; j++) {
+                  const res = act._interpolants[j].evaluate(clamped);
+                  if (act._propertyBindings[j]?.binding?.setValue) {
+                    act._propertyBindings[j].binding.setValue(res, 0);
+                  }
+                }
               }
             } catch (e) {}
           }

@@ -45,6 +45,9 @@ onUnmounted(() => {
   stopPolling();
 });
 
+let seekThrottleTimer: any = null;
+let pendingSeekVal: number | null = null;
+
 function handleSeekInput(mixerId: string, clipName: string, e: Event) {
   const val = +((e.target as HTMLInputElement).value);
   const key = `${mixerId}:${clipName}`;
@@ -58,16 +61,37 @@ function handleSeekInput(mixerId: string, clipName: string, e: Event) {
     clip.time = +val.toFixed(2);
   }
 
-  controlAnimation(mixerId, clipName, 'seek', val);
+  pendingSeekVal = val;
+  if (!seekThrottleTimer) {
+    seekThrottleTimer = setTimeout(() => {
+      seekThrottleTimer = null;
+      if (pendingSeekVal !== null) {
+        controlAnimation(mixerId, clipName, 'seek', pendingSeekVal);
+      }
+    }, 25);
+  }
 }
 
-function handleSeekChange(mixerId: string, clipName: string) {
+function handleSeekChange(mixerId: string, clipName: string, e?: Event) {
+  if (e && (e.target as HTMLInputElement)?.value !== undefined) {
+    const val = +((e.target as HTMLInputElement).value);
+    controlAnimation(mixerId, clipName, 'seek', val);
+  } else if (pendingSeekVal !== null) {
+    controlAnimation(mixerId, clipName, 'seek', pendingSeekVal);
+  }
+
+  if (seekThrottleTimer) {
+    clearTimeout(seekThrottleTimer);
+    seekThrottleTimer = null;
+  }
+  pendingSeekVal = null;
+
   setTimeout(() => {
     delete seekingClips.value[`${mixerId}:${clipName}`];
     if (state.seekingClipKey === `${mixerId}:${clipName}`) {
       state.seekingClipKey = null;
     }
-  }, 100);
+  }, 120);
 }
 
 function handleSpeedChange(mixerId: string, clipName: string, speed: number) {
@@ -149,7 +173,9 @@ function handleSpeedChange(mixerId: string, clipName: string, speed: number) {
                 step="0.05"
                 :value="clip.time"
                 @input="handleSeekInput(mixer.id, clip.name, $event)"
-                @change="handleSeekChange(mixer.id, clip.name)"
+                @change="handleSeekChange(mixer.id, clip.name, $event)"
+                @mouseup="handleSeekChange(mixer.id, clip.name, $event)"
+                @pointerup="handleSeekChange(mixer.id, clip.name, $event)"
                 class="timeline-slider"
               />
               <span class="time-readout">{{ clip.time }}s / {{ clip.duration }}s</span>

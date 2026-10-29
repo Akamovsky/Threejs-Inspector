@@ -128,78 +128,95 @@ export class DebugCameraManager {
       this.guideOverlayElement = null;
     }
 
-    try {
-      if (typeof localStorage !== 'undefined' && localStorage.getItem('__THREE_INSPECTOR_SEEN_DEBUG_CAM_GUIDE__')) {
-        return; // Don't show if user has already acknowledged it
-      }
-    } catch (e) {}
-
     const el = document.createElement('div');
     el.id = '__three_inspector_debug_cam_guide__';
     el.style.cssText = `
       position: fixed;
-      bottom: 28px;
-      right: 28px;
-      background: #0f172a;
+      bottom: 24px;
+      right: 24px;
+      background: #090d16;
       color: #e2e8f0;
       padding: 14px 18px;
-      border-radius: 10px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      box-shadow: 0 20px 30px -10px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(56, 189, 248, 0.25);
+      border-radius: 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      font-size: 12px;
+      border: 1px solid #10b981;
+      box-shadow: 0 20px 35px rgba(0, 0, 0, 0.85), 0 0 20px rgba(16, 185, 129, 0.25);
       z-index: 9999999;
       pointer-events: auto;
       backdrop-filter: blur(12px);
       transition: opacity 0.25s ease, transform 0.25s ease;
-      min-width: 250px;
+      min-width: 270px;
       max-width: 320px;
     `;
 
     el.innerHTML = `
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-        <div style="display: flex; align-items: center; gap: 7px;">
-          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 10px #38bdf8;"></span>
-          <span style="color: #f8fafc; font-weight: 700; font-size: 12px; letter-spacing: 0.3px;">Viewport Navigation</span>
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981;"></span>
+          <span style="color: #10b981; font-weight: 700; font-size: 12px; letter-spacing: 0.5px; text-transform: uppercase;">Debug Camera Controls</span>
         </div>
-        <button id="__three_inspector_guide_dismiss__" style="
+        <button id="__three_inspector_guide_close__" style="
           background: transparent;
           border: none;
-          color: #94a3b8;
+          color: #64748b;
           font-size: 16px;
           cursor: pointer;
           padding: 0 4px;
           line-height: 1;
-        " title="Close">×</button>
+          transition: color 0.15s ease;
+        " title="Dismiss Guide">✕</button>
       </div>
 
-      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 11.5px; color: #94a3b8; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 9px;">
+      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 11.5px; color: #94a3b8; border-top: 1px solid rgba(16, 185, 129, 0.15); padding-top: 10px; margin-bottom: 12px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="color: #cbd5e1;">Rotate / Orbit</span>
-          <kbd style="background: rgba(255, 255, 255, 0.08); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-family: monospace; border: 1px solid rgba(56, 189, 248, 0.25);">Left Click</kbd>
+          <span style="color: #cbd5e1;">Orbit / Rotate</span>
+          <kbd style="background: #041c14; color: #34d399; padding: 2px 7px; border-radius: 4px; font-size: 10.5px; font-family: monospace; border: 1px solid rgba(16, 185, 129, 0.4);">Left Click</kbd>
         </div>
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="color: #cbd5e1;">Zoom in / out</span>
-          <kbd style="background: rgba(255, 255, 255, 0.08); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-family: monospace; border: 1px solid rgba(56, 189, 248, 0.25);">Scroll Wheel</kbd>
+          <span style="color: #cbd5e1;">Zoom In / Out</span>
+          <kbd style="background: #041c14; color: #34d399; padding: 2px 7px; border-radius: 4px; font-size: 10.5px; font-family: monospace; border: 1px solid rgba(16, 185, 129, 0.4);">Scroll Wheel</kbd>
         </div>
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="color: #cbd5e1;">Pan viewport</span>
-          <kbd style="background: rgba(255, 255, 255, 0.08); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-family: monospace; border: 1px solid rgba(56, 189, 248, 0.25);">Right Click</kbd>
+          <span style="color: #cbd5e1;">Pan Viewport</span>
+          <kbd style="background: #041c14; color: #34d399; padding: 2px 7px; border-radius: 4px; font-size: 10.5px; font-family: monospace; border: 1px solid rgba(16, 185, 129, 0.4);">Right Click</kbd>
         </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end;">
+        <button id="__three_inspector_guide_dismiss__" style="
+          background: rgba(16, 185, 129, 0.15);
+          border: 1px solid #10b981;
+          color: #34d399;
+          border-radius: 4px;
+          font-size: 11px;
+          padding: 3px 10px;
+          cursor: pointer;
+          font-weight: 600;
+          transition: all 0.15s ease;
+        ">Got it</button>
       </div>
     `;
 
     document.body.appendChild(el);
     this.guideOverlayElement = el;
 
+    const closeBtn = el.querySelector('#__three_inspector_guide_close__') as HTMLElement;
     const dismissBtn = el.querySelector('#__three_inspector_guide_dismiss__') as HTMLElement;
+
+    if (closeBtn) {
+      closeBtn.onmouseenter = () => { closeBtn.style.color = '#10b981'; };
+      closeBtn.onmouseleave = () => { closeBtn.style.color = '#64748b'; };
+    }
+    if (dismissBtn) {
+      dismissBtn.onmouseenter = () => { dismissBtn.style.background = 'rgba(16, 185, 129, 0.3)'; };
+      dismissBtn.onmouseleave = () => { dismissBtn.style.background = 'rgba(16, 185, 129, 0.15)'; };
+    }
+
     const hideGuide = () => {
-      try {
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('__THREE_INSPECTOR_SEEN_DEBUG_CAM_GUIDE__', 'true');
-        }
-      } catch (e) {}
       if (this.guideOverlayElement) {
         this.guideOverlayElement.style.opacity = '0';
-        this.guideOverlayElement.style.transform = 'translateY(10px)';
+        this.guideOverlayElement.style.transform = 'translateY(8px)';
         setTimeout(() => {
           if (this.guideOverlayElement) {
             this.guideOverlayElement.remove();
@@ -209,14 +226,8 @@ export class DebugCameraManager {
       }
     };
 
-    if (dismissBtn) {
-      dismissBtn.addEventListener('click', hideGuide);
-    }
-
-    // Auto dismiss after 10 seconds
-    setTimeout(() => {
-      hideGuide();
-    }, 10000);
+    if (closeBtn) closeBtn.addEventListener('click', hideGuide);
+    if (dismissBtn) dismissBtn.addEventListener('click', hideGuide);
   }
 
   public disable() {

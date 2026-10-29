@@ -78,6 +78,32 @@ export function initBridge() {
   }
 }
 
+export function applyAnimationData(data: any[]) {
+  if (!Array.isArray(data)) return;
+  if (!state.seekingClipKey || state.animations.length === 0) {
+    state.animations = data;
+    return;
+  }
+  // While user is dragging a slider for a specific clip,
+  // update ALL other clips and playback states continuously,
+  // but DO NOT overwrite the time on the clip being dragged!
+  data.forEach((newMixer: any) => {
+    const existingMixer = state.animations.find((m) => m.id === newMixer.id);
+    if (!existingMixer) return;
+    newMixer.clips.forEach((newClip: any) => {
+      const key = `${newMixer.id}:${newClip.name}`;
+      const existingClip = existingMixer.clips.find((c) => c.name === newClip.name);
+      if (!existingClip) return;
+      existingClip.isPlaying = newClip.isPlaying;
+      existingClip.speed = newClip.speed;
+      existingClip.duration = newClip.duration;
+      if (key !== state.seekingClipKey) {
+        existingClip.time = newClip.time;
+      }
+    });
+  });
+}
+
 function handleMessage(message: InspectorMessage) {
   if (!message || !message.action) return;
 
@@ -125,30 +151,7 @@ function handleMessage(message: InspectorMessage) {
       break;
 
     case 'ANIMATION_DATA':
-      if (Array.isArray(message.payload)) {
-        if (!state.seekingClipKey) {
-          state.animations = message.payload;
-        } else {
-          // Update all clips except the one currently being dragged by the user
-          message.payload.forEach((newMixer: any) => {
-            const existingMixer = state.animations.find((m) => m.id === newMixer.id);
-            if (!existingMixer) return;
-            newMixer.clips.forEach((newClip: any) => {
-              const key = `${newMixer.id}:${newClip.name}`;
-              if (key === state.seekingClipKey) {
-                // Keep user's active drag value
-                return;
-              }
-              const existingClip = existingMixer.clips.find((c) => c.name === newClip.name);
-              if (existingClip) {
-                existingClip.time = newClip.time;
-                existingClip.isPlaying = newClip.isPlaying;
-                existingClip.speed = newClip.speed;
-              }
-            });
-          });
-        }
-      }
+      applyAnimationData(message.payload);
       break;
 
     case 'TRANSFORM_GIZMO_UPDATED':
@@ -416,7 +419,7 @@ export function requestAnimations() {
     })()
   `;
   executeInPage(script, (data) => {
-    if (Array.isArray(data)) state.animations = data;
+    if (Array.isArray(data)) applyAnimationData(data);
   });
   send('REQUEST_ANIMATIONS');
 }
@@ -432,7 +435,7 @@ export function controlAnimation(mixerId: string, clipName: string, action: 'pla
   `;
   executeInPage(script, (data) => {
     if (Array.isArray(data)) {
-      state.animations = data;
+      applyAnimationData(data);
     }
   });
   send('CONTROL_ANIMATION', { mixerId, clipName, action, value });
