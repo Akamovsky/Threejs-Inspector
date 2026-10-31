@@ -122,6 +122,17 @@ export class GizmoManager {
 
         const helper = this.transformControls.getHelper();
         helper.name = '__THREE_INSPECTOR_GIZMO__';
+        (helper as any).__isInspectorObject = true;
+        helper.traverse((node: any) => {
+          (node as any).__isInspectorObject = true;
+          if (node.material) {
+            const mats = Array.isArray(node.material) ? node.material : [node.material];
+            mats.forEach((m: any) => {
+              if (m && !m.onBuild) m.onBuild = function () {};
+              if (m && !m.onBeforeCompile) m.onBeforeCompile = function () {};
+            });
+          }
+        });
         this.helperRoot.add(helper);
       } catch (e) {
         console.warn('[Three.js Inspector] Failed to initialize TransformControls:', e);

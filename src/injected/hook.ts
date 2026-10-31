@@ -62,6 +62,29 @@ import { AnimationManager } from './animations';
     ensureDeterminantAffine(Matrix4.prototype);
   }
 
+  // Safe helper material builder: uses host page's window.THREE if available,
+  // and polyfills onBuild / onBeforeCompile so different Three.js versions never crash WebGLPrograms
+  function createHelperMaterial(colorHex: number, opacity = 0.8) {
+    const THREE = (window as any).THREE;
+    let mat: any;
+    if (THREE && THREE.LineBasicMaterial) {
+      try {
+        mat = new THREE.LineBasicMaterial({ color: colorHex, depthTest: false, transparent: true, opacity });
+      } catch (e) {}
+    }
+    if (!mat) {
+      mat = new MeshBasicMaterial({ color: colorHex, depthTest: false, transparent: true, opacity, wireframe: true });
+    }
+    // Polyfill onBuild / onBeforeCompile on the material instance
+    if (!mat.onBuild) {
+      mat.onBuild = function () {};
+    }
+    if (!mat.onBeforeCompile) {
+      mat.onBeforeCompile = function () {};
+    }
+    return mat;
+  }
+
   // Active Three.js instances
   const registeredScenes = new Set<any>();
   const registeredRenderers = new Set<any>();
@@ -84,6 +107,8 @@ import { AnimationManager } from './animations';
   // Wireframe override state
   let isWireframeActive = false;
   const overrideWireframe = new MeshBasicMaterial({ wireframe: true, color: 0x38bdf8 });
+  if (!(overrideWireframe as any).onBuild) (overrideWireframe as any).onBuild = function () {};
+  if (!overrideWireframe.onBeforeCompile) overrideWireframe.onBeforeCompile = function () {};
 
   // Persistent property overrides (e.g. for light intensity)
   const pinnedOverrides = new Map<string, Record<string, any>>();
@@ -954,9 +979,7 @@ import { AnimationManager } from './animations';
 
       if ((target.isMesh || target.isInstancedMesh) && target.geometry) {
         helper = new BoxHelper(target, 0x00ffff);
-        helper.material.depthTest = false;
-        helper.material.transparent = true;
-        helper.material.opacity = 0.9;
+        helper.material = createHelperMaterial(0x00ffff, 0.9);
         helper.renderOrder = 999999;
       } else {
         const worldPos = new Vector3();
@@ -974,9 +997,7 @@ import { AnimationManager } from './animations';
           ? 0xff3b30
           : 0x00ffcc;
         helper = new Box3Helper(box, new Color(colorHex));
-        helper.material.depthTest = false;
-        helper.material.transparent = true;
-        helper.material.opacity = 0.95;
+        helper.material = createHelperMaterial(colorHex, 0.95);
         helper.renderOrder = 999999;
       }
 
@@ -1016,9 +1037,7 @@ import { AnimationManager } from './animations';
 
       if ((target.isMesh || target.isInstancedMesh) && target.geometry) {
         helper = new BoxHelper(target, 0x38bdf8);
-        helper.material.depthTest = false;
-        helper.material.transparent = true;
-        helper.material.opacity = 0.5;
+        helper.material = createHelperMaterial(0x38bdf8, 0.5);
         helper.renderOrder = 999998;
       } else {
         const worldPos = new Vector3();
@@ -1030,9 +1049,7 @@ import { AnimationManager } from './animations';
         const box = new Box3();
         box.setFromCenterAndSize(worldPos, new Vector3(1, 1, 1));
         helper = new Box3Helper(box, new Color(0x38bdf8));
-        helper.material.depthTest = false;
-        helper.material.transparent = true;
-        helper.material.opacity = 0.5;
+        helper.material = createHelperMaterial(0x38bdf8, 0.5);
         helper.renderOrder = 999998;
       }
 
