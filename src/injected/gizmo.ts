@@ -6,7 +6,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 export type GizmoMode = 'translate' | 'rotate' | 'scale' | 'none';
 
 export class GizmoManager {
-  private transformControls: TransformControls | null = null;
+  public transformControls: TransformControls | null = null;
   private currentMode: GizmoMode = 'none';
   private targetObject: any = null;
   private helperRoot = new Group();
@@ -37,6 +37,9 @@ export class GizmoManager {
     if (!this.transformControls) {
       try {
         this.transformControls = new TransformControls(camera, domElement);
+        // Disconnect default passive listeners so our capture-phase handler has full authority
+        // without duplicate event firing or interference from host pointer listeners
+        this.transformControls.disconnect();
         this.transformControls.size = 0.85;
         this.transformControls.setMode(this.currentMode === 'none' ? 'translate' : this.currentMode);
 
@@ -53,6 +56,7 @@ export class GizmoManager {
           }
           if (this.transformControls.axis !== null) {
             event.stopPropagation();
+            event.stopImmediatePropagation();
             if (typeof (this.transformControls as any).pointerDown === 'function') {
               (this.transformControls as any).pointerDown(pointer);
             }
@@ -62,17 +66,23 @@ export class GizmoManager {
         const onHandlePointerMove = (event: PointerEvent) => {
           if (!this.transformControls || !this.transformControls.enabled || this.currentMode === 'none') return;
           const rect = domElement.getBoundingClientRect();
-          const pointer = {
-            x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
-            y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
-            button: event.button
-          };
           if (this.transformControls.dragging) {
             event.stopPropagation();
+            event.stopImmediatePropagation();
+            const pointer = {
+              x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+              y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
+              button: -1 // Three.js TransformControls requires button === -1 during pointerMove drag!
+            };
             if (typeof (this.transformControls as any).pointerMove === 'function') {
               (this.transformControls as any).pointerMove(pointer);
             }
           } else {
+            const pointer = {
+              x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+              y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
+              button: event.button
+            };
             if (typeof (this.transformControls as any).pointerHover === 'function') {
               (this.transformControls as any).pointerHover(pointer);
             }
@@ -83,6 +93,7 @@ export class GizmoManager {
           if (!this.transformControls || !this.transformControls.enabled || this.currentMode === 'none') return;
           if (this.transformControls.dragging) {
             event.stopPropagation();
+            event.stopImmediatePropagation();
             const rect = domElement.getBoundingClientRect();
             const pointer = {
               x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -95,9 +106,9 @@ export class GizmoManager {
           }
         };
 
-        domElement.addEventListener('pointerdown', onHandlePointerDown, { capture: true });
-        domElement.addEventListener('pointermove', onHandlePointerMove, { capture: true });
-        domElement.addEventListener('pointerup', onHandlePointerUp, { capture: true });
+        window.addEventListener('pointermove', onHandlePointerMove, { capture: true });
+        window.addEventListener('pointerup', onHandlePointerUp, { capture: true });
+        window.addEventListener('pointerdown', onHandlePointerDown, { capture: true });
 
         this.transformControls.addEventListener('objectChange', () => {
           if (this.targetObject && this.onTransformChange) {
@@ -167,13 +178,7 @@ export class GizmoManager {
       }
     } else {
       this.transformControls.camera = camera;
-      if (this.transformControls.domElement !== domElement) {
-        try {
-          this.transformControls.disconnect();
-          this.transformControls.domElement = domElement;
-          this.transformControls.connect();
-        } catch (e) {}
-      }
+      this.transformControls.domElement = domElement;
     }
   }
 
@@ -189,7 +194,7 @@ export class GizmoManager {
         const activeMode = (isLight && this.currentMode === 'scale') ? 'translate' : this.currentMode;
         this.transformControls.setMode(activeMode);
         this.transformControls.attach(object);
-        this.ensureControlsDrawRanges();
+        this.patchGizmoTree();
       } else {
         this.transformControls.detach();
       }
@@ -240,7 +245,7 @@ export class GizmoManager {
         this.transformControls.setMode(mode);
         if (this.targetObject) {
           this.transformControls.attach(this.targetObject);
-          this.ensureControlsDrawRanges();
+          this.patchGizmoTree();
         }
       }
     } catch (e) {}
@@ -264,12 +269,13 @@ export class GizmoManager {
     return Boolean(this.transformControls?.dragging);
   }
 
-  public ensureControlsDrawRanges() {
+  public patchGizmoTree() {
     if (!this.transformControls) return;
     try {
       const helper = (this.transformControls as any)._root || this.transformControls.getHelper?.();
       if (helper && helper.traverse) {
         helper.traverse((node: any) => {
+          (node as any).__isInspectorObject = true;
           if (node.geometry) {
             if (!node.geometry.drawRange) {
               node.geometry.drawRange = { start: 0, count: Infinity };
@@ -277,10 +283,20 @@ export class GizmoManager {
               node.geometry.drawRange.count = Infinity;
             }
           }
+          if (node.material) {
+            const mats = Array.isArray(node.material) ? node.material : [node.material];
+            mats.forEach((m: any) => {
+              if (m) {
+                if (!m.onBuild) m.onBuild = function () {};
+                if (!m.onBeforeCompile) m.onBeforeCompile = function () {};
+              }
+            });
+          }
         });
       }
       const plane = (this.transformControls as any)._plane;
       if (plane) {
+        (plane as any).__isInspectorObject = true;
         plane.visible = false;
         if (plane.geometry) {
           if (!plane.geometry.drawRange) {
@@ -296,5 +312,9 @@ export class GizmoManager {
         }
       }
     } catch (e) {}
+  }
+
+  public ensureControlsDrawRanges() {
+    this.patchGizmoTree();
   }
 }

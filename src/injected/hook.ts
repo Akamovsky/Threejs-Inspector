@@ -143,6 +143,22 @@ import { AnimationManager } from './animations';
   gizmoManager.setOnTransformChange((obj: any) => {
     if (!obj || !obj.uuid) return;
     try {
+      if (obj.position) {
+        pinProperty(obj, 'position.x', obj.position.x);
+        pinProperty(obj, 'position.y', obj.position.y);
+        pinProperty(obj, 'position.z', obj.position.z);
+      }
+      if (obj.rotation) {
+        pinProperty(obj, 'rotation.x', obj.rotation.x);
+        pinProperty(obj, 'rotation.y', obj.rotation.y);
+        pinProperty(obj, 'rotation.z', obj.rotation.z);
+      }
+      if (obj.scale) {
+        pinProperty(obj, 'scale.x', obj.scale.x);
+        pinProperty(obj, 'scale.y', obj.scale.y);
+        pinProperty(obj, 'scale.z', obj.scale.z);
+      }
+
       emit('TRANSFORM_GIZMO_UPDATED', {
         uuid: obj.uuid,
         position: obj.position ? { x: +obj.position.x.toFixed(3), y: +obj.position.y.toFixed(3), z: +obj.position.z.toFixed(3) } : { x: 0, y: 0, z: 0 },
@@ -257,7 +273,22 @@ import { AnimationManager } from './animations';
       };
     };
 
-    if (typeof Element !== 'undefined') patchObj(Element.prototype);
+    if (typeof Element !== 'undefined') {
+      patchObj(Element.prototype);
+      if (Element.prototype.setPointerCapture && !(Element.prototype as any).__INSPECTOR_PC_HOOKED__) {
+        (Element.prototype as any).__INSPECTOR_PC_HOOKED__ = true;
+        const origPC = Element.prototype.setPointerCapture;
+        Element.prototype.setPointerCapture = function (pointerId: number) {
+          if (
+            gizmoManager.isDragging() ||
+            (gizmoManager.getMode() !== 'none' && gizmoManager.transformControls?.axis !== null)
+          ) {
+            return;
+          }
+          return origPC.call(this, pointerId);
+        };
+      }
+    }
     if (typeof HTMLElement !== 'undefined') patchObj(HTMLElement.prototype);
     if (typeof HTMLBodyElement !== 'undefined') patchObj(HTMLBodyElement.prototype);
     if (typeof HTMLCanvasElement !== 'undefined') patchObj(HTMLCanvasElement.prototype);
@@ -489,6 +520,33 @@ import { AnimationManager } from './animations';
         }
         if (overrides['visible'] !== undefined) {
           obj.visible = overrides['visible'];
+        }
+        if (overrides['position.x'] !== undefined && obj.position) {
+          obj.position.x = overrides['position.x'];
+        }
+        if (overrides['position.y'] !== undefined && obj.position) {
+          obj.position.y = overrides['position.y'];
+        }
+        if (overrides['position.z'] !== undefined && obj.position) {
+          obj.position.z = overrides['position.z'];
+        }
+        if (overrides['rotation.x'] !== undefined && obj.rotation) {
+          obj.rotation.x = overrides['rotation.x'];
+        }
+        if (overrides['rotation.y'] !== undefined && obj.rotation) {
+          obj.rotation.y = overrides['rotation.y'];
+        }
+        if (overrides['rotation.z'] !== undefined && obj.rotation) {
+          obj.rotation.z = overrides['rotation.z'];
+        }
+        if (overrides['scale.x'] !== undefined && obj.scale) {
+          obj.scale.x = overrides['scale.x'];
+        }
+        if (overrides['scale.y'] !== undefined && obj.scale) {
+          obj.scale.y = overrides['scale.y'];
+        }
+        if (overrides['scale.z'] !== undefined && obj.scale) {
+          obj.scale.z = overrides['scale.z'];
         }
       } catch (e) {}
     }
