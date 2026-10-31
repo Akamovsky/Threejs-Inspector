@@ -62,7 +62,17 @@ import { AnimationManager } from './animations';
     ensureDeterminantAffine(Matrix4.prototype);
   }
 
-  // Safe helper material builder: uses host page's window.THREE if available,
+  // Ensure any geometry in host scenes (or extension helpers) has a valid drawRange
+  function ensureDrawRange(geo: any) {
+    if (!geo) return;
+    try {
+      if (!geo.drawRange) {
+        geo.drawRange = { start: 0, count: Infinity };
+      } else if (typeof geo.drawRange.count !== 'number') {
+        geo.drawRange.count = Infinity;
+      }
+    } catch (e) {}
+  }
   // and polyfills onBuild / onBeforeCompile so different Three.js versions never crash WebGLPrograms
   function createHelperMaterial(colorHex: number, opacity = 0.8) {
     const THREE = (window as any).THREE;
@@ -421,6 +431,7 @@ import { AnimationManager } from './animations';
       }
 
       gizmoManager.updateCamera(renderCam);
+      gizmoManager.ensureControlsDrawRanges();
 
       applyPinnedOverrides();
 
@@ -577,10 +588,10 @@ import { AnimationManager } from './animations';
 
               if (obj.geometry && !isInternalInspectorObject(obj.geometry)) {
                 geoType = obj.geometry.type || 'BufferGeometry';
-                if (obj.geometry.attributes?.position) {
+                if (obj.geometry.attributes?.position && typeof obj.geometry.attributes.position.count === 'number') {
                   verticesCount = obj.geometry.attributes.position.count;
                 }
-                if (obj.geometry.index) {
+                if (obj.geometry.index && typeof obj.geometry.index.count === 'number') {
                   facesCount = Math.floor(obj.geometry.index.count / 3);
                 } else if (verticesCount > 0) {
                   facesCount = Math.floor(verticesCount / 3);
@@ -1003,6 +1014,7 @@ import { AnimationManager } from './animations';
 
       helper.name = '__THREE_INSPECTOR_HELPER__';
       helper.__isInspectorObject = true;
+      ensureDrawRange(helper.geometry);
       if (helper.matrixWorld) {
         ensureDeterminantAffine(Object.getPrototypeOf(helper.matrixWorld));
       }
@@ -1055,6 +1067,7 @@ import { AnimationManager } from './animations';
 
       helper.name = '__THREE_INSPECTOR_HOVER__';
       helper.__isInspectorObject = true;
+      ensureDrawRange(helper.geometry);
       if (helper.matrixWorld) {
         ensureDeterminantAffine(Object.getPrototypeOf(helper.matrixWorld));
       }
@@ -1166,7 +1179,10 @@ import { AnimationManager } from './animations';
       }
 
       if (selectedHighlightHelper && typeof selectedHighlightHelper.update === 'function') {
-        selectedHighlightHelper.update();
+        try {
+          selectedHighlightHelper.update();
+          ensureDrawRange(selectedHighlightHelper.geometry);
+        } catch (e) {}
       }
 
       const updatedDetails = extractObjectDetails(obj);
@@ -1258,7 +1274,10 @@ import { AnimationManager } from './animations';
 
       if (selectedHighlightHelper && selectedHighlightTarget && gizmoManager.isDragging()) {
         if (typeof selectedHighlightHelper.update === 'function') {
-          selectedHighlightHelper.update();
+          try {
+            selectedHighlightHelper.update();
+            ensureDrawRange(selectedHighlightHelper.geometry);
+          } catch (e) {}
         } else if (selectedHighlightHelper.box) {
           const worldPos = new Vector3();
           if (typeof selectedHighlightTarget.getWorldPosition === 'function') {
@@ -1274,6 +1293,29 @@ import { AnimationManager } from './animations';
 
   function hookRendererPrototype() {
     const THREE = (window as any).THREE;
+    if (THREE) {
+      if (THREE.BufferGeometry?.prototype) {
+        try {
+          const origInit = THREE.BufferGeometry.prototype.constructor;
+          if (origInit && !THREE.BufferGeometry.prototype.__INSPECTOR_DRAWRANGE_GUARDED__) {
+            THREE.BufferGeometry.prototype.__INSPECTOR_DRAWRANGE_GUARDED__ = true;
+            Object.defineProperty(THREE.BufferGeometry.prototype, 'drawRange', {
+              get() {
+                if (!this._drawRange) this._drawRange = { start: 0, count: Infinity };
+                if (typeof this._drawRange.count !== 'number') this._drawRange.count = Infinity;
+                return this._drawRange;
+              },
+              set(val) {
+                if (val && typeof val.count !== 'number') val.count = Infinity;
+                this._drawRange = val;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch (e) {}
+      }
+    }
     if (THREE && THREE.WebGLRenderer && !THREE.WebGLRenderer.__INSPECTOR_HOOKED__) {
       THREE.WebGLRenderer.__INSPECTOR_HOOKED__ = true;
       const originalRender = THREE.WebGLRenderer.prototype.render;

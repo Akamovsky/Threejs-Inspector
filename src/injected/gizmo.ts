@@ -16,6 +16,7 @@ export class GizmoManager {
 
   constructor() {
     this.helperRoot.name = '__THREE_INSPECTOR_HELPERS__';
+    (this.helperRoot as any).__isInspectorObject = true;
   }
 
   public setOnTransformChange(callback: (obj: any) => void) {
@@ -109,6 +110,13 @@ export class GizmoManager {
               if (typeof this.targetObject.updateMatrixWorld === 'function') {
                 this.targetObject.updateMatrixWorld(true);
               }
+              if (this.targetObject.geometry) {
+                if (!this.targetObject.geometry.drawRange) {
+                  this.targetObject.geometry.drawRange = { start: 0, count: Infinity };
+                } else if (typeof this.targetObject.geometry.drawRange.count !== 'number') {
+                  this.targetObject.geometry.drawRange.count = Infinity;
+                }
+              }
               this.onTransformChange(this.targetObject);
             } catch (e) {}
           }
@@ -125,6 +133,9 @@ export class GizmoManager {
         (helper as any).__isInspectorObject = true;
         helper.traverse((node: any) => {
           (node as any).__isInspectorObject = true;
+          if (node.geometry && node.geometry.drawRange && typeof node.geometry.drawRange.count !== 'number') {
+            node.geometry.drawRange.count = Infinity;
+          }
           if (node.material) {
             const mats = Array.isArray(node.material) ? node.material : [node.material];
             mats.forEach((m: any) => {
@@ -133,6 +144,23 @@ export class GizmoManager {
             });
           }
         });
+        if ((this.transformControls as any)._plane) {
+          const plane = (this.transformControls as any)._plane;
+          (plane as any).__isInspectorObject = true;
+          plane.visible = false;
+          if (plane.geometry) {
+            if (!plane.geometry.drawRange) {
+              plane.geometry.drawRange = { start: 0, count: Infinity };
+            } else if (typeof plane.geometry.drawRange.count !== 'number') {
+              plane.geometry.drawRange.count = Infinity;
+            }
+          }
+          if (plane.material) {
+            plane.material.visible = false;
+            if (!plane.material.onBuild) plane.material.onBuild = function () {};
+            if (!plane.material.onBeforeCompile) plane.material.onBeforeCompile = function () {};
+          }
+        }
         this.helperRoot.add(helper);
       } catch (e) {
         console.warn('[Three.js Inspector] Failed to initialize TransformControls:', e);
@@ -161,6 +189,7 @@ export class GizmoManager {
         const activeMode = (isLight && this.currentMode === 'scale') ? 'translate' : this.currentMode;
         this.transformControls.setMode(activeMode);
         this.transformControls.attach(object);
+        this.ensureControlsDrawRanges();
       } else {
         this.transformControls.detach();
       }
@@ -211,6 +240,7 @@ export class GizmoManager {
         this.transformControls.setMode(mode);
         if (this.targetObject) {
           this.transformControls.attach(this.targetObject);
+          this.ensureControlsDrawRanges();
         }
       }
     } catch (e) {}
@@ -232,5 +262,39 @@ export class GizmoManager {
 
   public isDragging(): boolean {
     return Boolean(this.transformControls?.dragging);
+  }
+
+  public ensureControlsDrawRanges() {
+    if (!this.transformControls) return;
+    try {
+      const helper = (this.transformControls as any)._root || this.transformControls.getHelper?.();
+      if (helper && helper.traverse) {
+        helper.traverse((node: any) => {
+          if (node.geometry) {
+            if (!node.geometry.drawRange) {
+              node.geometry.drawRange = { start: 0, count: Infinity };
+            } else if (typeof node.geometry.drawRange.count !== 'number') {
+              node.geometry.drawRange.count = Infinity;
+            }
+          }
+        });
+      }
+      const plane = (this.transformControls as any)._plane;
+      if (plane) {
+        plane.visible = false;
+        if (plane.geometry) {
+          if (!plane.geometry.drawRange) {
+            plane.geometry.drawRange = { start: 0, count: Infinity };
+          } else if (typeof plane.geometry.drawRange.count !== 'number') {
+            plane.geometry.drawRange.count = Infinity;
+          }
+        }
+        if (plane.material) {
+          plane.material.visible = false;
+          if (!plane.material.onBuild) plane.material.onBuild = function () {};
+          if (!plane.material.onBeforeCompile) plane.material.onBeforeCompile = function () {};
+        }
+      }
+    } catch (e) {}
   }
 }
