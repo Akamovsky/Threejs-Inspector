@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { state, refresh, selectObject } from '../bridge';
 import TreeNode from './TreeNode.vue';
-import { Search, RefreshCw, Layers } from 'lucide-vue-next';
+import { Search, RefreshCw, Layers } from '@lucide/vue';
 </script>
 
 <template>

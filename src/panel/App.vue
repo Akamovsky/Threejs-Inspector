@@ -27,7 +27,7 @@ import {
   Maximize2,
   Film,
   History
-} from 'lucide-vue-next';
+} from '@lucide/vue';
 
 const explorerView = ref<'hierarchy' | 'categories'>('hierarchy');
 const activeTab = computed({

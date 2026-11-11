@@ -20,7 +20,7 @@ import {
   EyeOff,
   Search,
   Download
-} from 'lucide-vue-next';
+} from '@lucide/vue';
 
 // Collapsible category sections state
 const openSections = ref({

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { state, requestAnimations, controlAnimation } from '../bridge';
-import { Play, Pause, Square, FastForward, Film, RefreshCw } from 'lucide-vue-next';
+import { Play, Pause, Square, FastForward, Film, RefreshCw } from '@lucide/vue';
 
 const animations = computed(() => state.animations);
 const seekingClips = ref<Record<string, boolean>>({});

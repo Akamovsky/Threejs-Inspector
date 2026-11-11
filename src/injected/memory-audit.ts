@@ -41,7 +41,7 @@ export class MemoryAuditor {
     // Scan all active scene graphs
     for (const scene of scenes) {
       scene.traverse((obj: any) => {
-        if (!obj) return;
+        if (!obj || obj.__isInspectorObject) return;
 
         if (obj.geometry && obj.geometry.uuid) {
           activeGeoUuids.add(obj.geometry.uuid);

@@ -12,7 +12,7 @@ import {
   Trash2,
   RefreshCw,
   TrendingUp
-} from 'lucide-vue-next';
+} from '@lucide/vue';
 
 const stats = computed(() => state.stats);
 const memoryAudit = computed(() => state.memoryAudit);

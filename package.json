@@ -1,26 +1,26 @@
 {
   "name": "threejs-inspector",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "DevTools Extension for inspecting and debugging Three.js scenes",
   "type": "module",
   "scripts": {
     "build": "vite build",
     "watch": "vite build --watch",
-    "demo": "vite --config vite.demo.config.ts"
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@lucide/vue": "^1.62.0",
-    "lucide-vue-next": "^0.475.0",
-    "three": "^0.186.1",
+    "@lucide/vue": "^1.70.0",
+    "three": "^0.187.0",
     "vue": "^3.5.13"
   },
   "devDependencies": {
-    "@types/chrome": "^0.0.308",
-    "@types/node": "^22.13.4",
-    "@types/three": "^0.186.0",
-    "@vitejs/plugin-vue": "^5.2.1",
+    "@types/chrome": "^0.3.7",
+    "@types/node": "^26.6.6",
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.3",
-    "vite": "^6.2.0",
-    "vue-tsc": "^2.2.2"
+    "vite": "^8.3.7",
+    "vue-tsc": "^3.3.14"
   }
 }

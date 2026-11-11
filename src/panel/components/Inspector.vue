@@ -29,7 +29,7 @@ import {
   Check,
   Image as ImageIcon,
   X
-} from 'lucide-vue-next';
+} from '@lucide/vue';
 
 const obj = computed(() => state.selectedObject);
 const isLight = computed(() => Boolean(obj.value?.light || obj.value?.type?.includes('Light')));
@@ -395,9 +395,8 @@ function applyShaders() {
 
         <!-- Material Properties Tab -->
         <div v-show="activeMaterialTab === 'properties'" class="fields-grid" style="margin-top: 8px">
-          <!-- Color -->
-          <div v-if="activeMaterial.color" class="field-row">
-            <span class="field-label">Color</span>
+          <!-- Color (swatch + hex sit left of the label) -->
+          <div v-if="activeMaterial.color" class="field-row color-row">
             <div class="color-field">
               <input
                 type="color"
@@ -406,6 +405,7 @@ function applyShaders() {
               />
               <span class="color-hex">{{ activeMaterial.color }}</span>
             </div>
+            <span class="field-label">Color</span>
           </div>
 
           <!-- Wireframe -->
@@ -525,8 +525,7 @@ function applyShaders() {
           </button>
         </div>
         <div class="fields-grid">
-          <div class="field-row">
-            <span class="field-label">Color</span>
+          <div class="field-row color-row">
             <div class="color-field">
               <input
                 type="color"
@@ -535,6 +534,7 @@ function applyShaders() {
               />
               <span class="color-hex">{{ obj.light.color }}</span>
             </div>
+            <span class="field-label">Color</span>
           </div>
           <div class="field-row">
             <div class="intensity-label-row">
@@ -839,6 +839,11 @@ function applyShaders() {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+/* Color rows pack everything left: swatch + hex sit flush before the label */
+.field-row.color-row {
+  justify-content: flex-start;
 }
 
 .field-label {

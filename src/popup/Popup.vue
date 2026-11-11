@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { Box, CheckCircle2, XCircle, Info } from 'lucide-vue-next';
+import { Box, CheckCircle2, XCircle, Info } from '@lucide/vue';
 
 interface TabStatus {
   detected: boolean;

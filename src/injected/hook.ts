@@ -484,23 +484,35 @@ import { AnimationManager } from './animations';
     if (!renderer || renderer.__INSPECTOR_RENDER_HOOKED__) return;
     renderer.__INSPECTOR_RENDER_HOOKED__ = true;
 
-    // Hook renderer prototype if accessible
+    // Wrap at most ONE layer — the prototype when reachable, otherwise this
+    // instance — so handleHookedRender runs exactly once per frame. Wrapping
+    // both layers (or stacking wrappers) double/triple-counts tickRender,
+    // which inflated the reported FPS.
+    let target: any = null;
+    let original: any = null;
     try {
       const proto = renderer.constructor?.prototype;
-      if (proto && !proto.__INSPECTOR_RENDER_HOOKED__) {
-        proto.__INSPECTOR_RENDER_HOOKED__ = true;
-        const protoRender = proto.render;
-        proto.render = function (scene: any, camera: any) {
-          return handleHookedRender.call(this, protoRender, scene, camera);
-        };
+      if (proto && typeof proto.render === 'function' && !(proto.render as any).__INSPECTOR_RENDER_WRAPPER__) {
+        target = proto;
+        original = proto.render;
       }
     } catch (e) {}
 
-    // Hook instance directly
-    const originalRender = renderer.render;
-    renderer.render = function (scene: any, camera: any) {
-      return handleHookedRender.call(this, originalRender, scene, camera);
-    };
+    if (!target) {
+      const current = renderer.render;
+      if (typeof current === 'function' && !(current as any).__INSPECTOR_RENDER_WRAPPER__) {
+        target = renderer;
+        original = current;
+      }
+    }
+
+    if (target && original) {
+      const wrapper = function (this: any, scene: any, camera: any) {
+        return handleHookedRender.call(this, original, scene, camera);
+      };
+      (wrapper as any).__INSPECTOR_RENDER_WRAPPER__ = true;
+      target.render = wrapper;
+    }
   }
 
   function applyPinnedOverrides() {
@@ -1376,11 +1388,18 @@ import { AnimationManager } from './animations';
     }
     if (THREE && THREE.WebGLRenderer && !THREE.WebGLRenderer.__INSPECTOR_HOOKED__) {
       THREE.WebGLRenderer.__INSPECTOR_HOOKED__ = true;
-      const originalRender = THREE.WebGLRenderer.prototype.render;
-      THREE.WebGLRenderer.prototype.render = function (scene: any, camera: any) {
-        return handleHookedRender.call(this, originalRender, scene, camera);
-      };
-      emitDetection();
+      const protoRender = THREE.WebGLRenderer.prototype.render;
+      // Shared __INSPECTOR_RENDER_WRAPPER__ marker: skip if hookRenderer()
+      // already wrapped this prototype, otherwise we would stack wrappers
+      // and run handleHookedRender multiple times per frame.
+      if (protoRender && !(protoRender as any).__INSPECTOR_RENDER_WRAPPER__) {
+        const wrapper = function (this: any, scene: any, camera: any) {
+          return handleHookedRender.call(this, protoRender, scene, camera);
+        };
+        (wrapper as any).__INSPECTOR_RENDER_WRAPPER__ = true;
+        THREE.WebGLRenderer.prototype.render = wrapper;
+        emitDetection();
+      }
     }
     animationManager.hookMixerPrototype();
   }
@@ -1467,7 +1486,7 @@ import { AnimationManager } from './animations';
           const canvas = getActiveCanvas();
           const cam = getActiveCamera();
           if (obj && canvas) {
-            const isNowFocused = debugCameraManager.focusOn(obj, canvas, cam);
+            const isNowFocused = debugCameraManager.focusOn(obj, canvas, cam, getActiveScene());
             emit('FOCUS_STATE_CHANGED', { isFocused: isNowFocused });
           }
         }
@@ -1565,7 +1584,7 @@ import { AnimationManager } from './animations';
             const canvas = getActiveCanvas();
             const cam = getActiveCamera();
             if (obj && canvas) {
-              const isNowFocused = debugCameraManager.focusOn(obj, canvas, cam);
+              const isNowFocused = debugCameraManager.focusOn(obj, canvas, cam, getActiveScene());
               return isNowFocused;
             }
             return false;
@@ -1580,7 +1599,7 @@ import { AnimationManager } from './animations';
               if (debugCameraManager.isEnabled()) {
                 debugCameraManager.disable();
               } else {
-                debugCameraManager.enable(canvas, lastActiveCamera);
+                debugCameraManager.enable(canvas, lastActiveCamera, getActiveScene());
               }
             }
             return debugCameraManager.isEnabled();

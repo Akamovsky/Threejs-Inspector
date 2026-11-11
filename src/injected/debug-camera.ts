@@ -1,11 +1,28 @@
-import { PerspectiveCamera, Vector3, Box3, DirectionalLight, AmbientLight } from 'three';
+import {
+  PerspectiveCamera,
+  Vector3,
+  Box3,
+  Group,
+  SpotLight,
+  Object3D,
+  Mesh,
+  MeshBasicMaterial,
+  ConeGeometry,
+  CylinderGeometry,
+  SphereGeometry,
+  MathUtils,
+  AdditiveBlending,
+  DoubleSide
+} from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export class DebugCameraManager {
   private debugCamera: PerspectiveCamera | null = null;
   private controls: OrbitControls | null = null;
-  private headlight: DirectionalLight | null = null;
-  private ambientLight: AmbientLight | null = null;
+  private flashlightRig: Group | null = null;
+  private flashlight: SpotLight | null = null;
+  private flashlightTarget: Object3D | null = null;
+  private scene: any = null;
   private isActive = false;
   private canvas: HTMLCanvasElement | null = null;
   private onContextMenuBound: ((e: MouseEvent) => void) | null = null;
@@ -32,10 +49,11 @@ export class DebugCameraManager {
     return this.controls;
   }
 
-  public enable(domElement: HTMLCanvasElement, currentCamera?: any) {
+  public enable(domElement: HTMLCanvasElement, currentCamera?: any, scene?: any) {
     if (this.isActive) return;
 
     this.canvas = domElement;
+    this.scene = scene || null;
 
     // Release any pointer lock
     if (typeof document !== 'undefined' && document.pointerLockElement) {
@@ -74,16 +92,10 @@ export class DebugCameraManager {
     this.debugCamera.updateMatrixWorld(true);
     this.debugCamera.updateProjectionMatrix();
 
-    // Attach gentle headlights so dark levels/rooms are clearly visible in debug mode
-    this.headlight = new DirectionalLight(0xffffff, 1.2);
-    this.headlight.name = '__THREE_INSPECTOR_HEADLIGHT__';
-    (this.headlight as any).__isInspectorObject = true;
-    this.debugCamera.add(this.headlight);
-
-    this.ambientLight = new AmbientLight(0xffffff, 0.4);
-    this.ambientLight.name = '__THREE_INSPECTOR_AMBIENT__';
-    (this.ambientLight as any).__isInspectorObject = true;
-    this.debugCamera.add(this.ambientLight);
+    // Proper flashlight: warm SpotLight + visible housing + volumetric beam.
+    // The rig lives in the scene graph (lights parented to an out-of-scene
+    // camera are never collected by the renderer and would do nothing).
+    this.buildFlashlight();
 
     try {
       this.controls = new OrbitControls(this.debugCamera, domElement);
@@ -230,20 +242,168 @@ export class DebugCameraManager {
     if (dismissBtn) dismissBtn.addEventListener('click', hideGuide);
   }
 
+  // ---------------------------------------------------------------
+  // Flashlight: warm SpotLight + visible torch housing + volumetric beam
+  // ---------------------------------------------------------------
+  private buildFlashlight() {
+    try {
+      const rig = new Group();
+      rig.name = '__THREE_INSPECTOR_FLASHLIGHT_RIG__';
+      (rig as any).__isInspectorObject = true;
+
+      // The aim group sits at the lens and tilts the beam slightly inward so
+      // the cone converges toward the center of the view, like a held torch.
+      const aim = new Group();
+      aim.name = '__THREE_INSPECTOR_FLASHLIGHT_AIM__';
+      (aim as any).__isInspectorObject = true;
+      const lensPos = new Vector3(0.27, -0.2, -0.45);
+      const converge = new Vector3(0.05, -0.01, -12);
+      const aimDir = converge.clone().sub(lensPos).normalize();
+      aim.position.copy(lensPos);
+      aim.quaternion.setFromUnitVectors(new Vector3(0, 0, -1), aimDir);
+      rig.add(aim);
+
+      // Warm halogen spot doing the actual lighting (physical falloff, soft edge)
+      const spot = new SpotLight(0xffe3b3, 260, 90, 0.46, 0.45, 1.6);
+      spot.name = '__THREE_INSPECTOR_FLASHLIGHT__';
+      (spot as any).__isInspectorObject = true;
+      const target = new Object3D();
+      target.name = '__THREE_INSPECTOR_FLASHLIGHT_TARGET__';
+      (target as any).__isInspectorObject = true;
+      target.position.set(0, 0, -14);
+      spot.target = target;
+      aim.add(spot);
+      aim.add(target);
+      this.flashlight = spot;
+      this.flashlightTarget = target;
+
+      // Older host Three.js bundles call onBuild/onBeforeCompile when present;
+      // guard our materials the same way the gizmo helpers do.
+      const guardMaterial = (m: MeshBasicMaterial) => {
+        const mm = m as any;
+        if (!mm.onBuild) mm.onBuild = function () {};
+        if (!mm.onBeforeCompile) mm.onBeforeCompile = function () {};
+        return m;
+      };
+
+      // Volumetric beam: two soft additive cones (apex at the lens, -Z forward)
+      const makeBeamCone = (radius: number, segments: number, opacity: number, color: number) => {
+        const geo = new ConeGeometry(radius, 16, segments, 1, true);
+        geo.translate(0, -8, 0); // apex at origin, base at y = -16
+        const mat = guardMaterial(new MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity,
+          blending: AdditiveBlending,
+          depthWrite: false,
+          fog: false,
+          toneMapped: false,
+          side: DoubleSide
+        }));
+        const mesh = new Mesh(geo, mat);
+        mesh.rotation.x = Math.PI / 2; // cone axis +Y -> -Z (camera forward)
+        mesh.position.z = -0.25;
+        mesh.renderOrder = 2;
+        return mesh;
+      };
+
+      const beamOuter = makeBeamCone(4.6, 32, 0.09, 0xffdfae);
+      const beamInner = makeBeamCone(2.1, 24, 0.16, 0xfff3d6);
+
+      // Sleek tactical torch, assembled backward from the lens (+Z = toward camera):
+      // slim tapered body, lighter shroud, emerald accent rings, glowing lens.
+      const makePart = (geo: CylinderGeometry, z: number, color: number) => {
+        const mesh = new Mesh(geo, guardMaterial(new MeshBasicMaterial({ color })));
+        mesh.rotation.x = -Math.PI / 2; // cylinder axis +Y -> -Z (radiusTop faces the lens)
+        mesh.position.z = z;
+        return mesh;
+      };
+
+      const body = makePart(new CylinderGeometry(0.032, 0.038, 0.7, 24), 0.48, 0x2a3038);
+      const shroud = makePart(new CylinderGeometry(0.048, 0.036, 0.16, 24), 0.1, 0x39424f);
+      const bezel = makePart(new CylinderGeometry(0.05, 0.05, 0.02, 24), 0.01, 0x10b981);
+      const stripe = makePart(new CylinderGeometry(0.0345, 0.0345, 0.05, 24), 0.62, 0x10b981);
+      const tail = makePart(new CylinderGeometry(0.034, 0.028, 0.08, 24), 0.86, 0x171b22);
+
+      // Glowing lens: a sphere reads from every viewing angle; the halo adds bloom
+      const lensMat = guardMaterial(new MeshBasicMaterial({
+        color: 0xfff3d9,
+        transparent: true,
+        opacity: 1,
+        blending: AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+        toneMapped: false
+      }));
+      const lens = new Mesh(new SphereGeometry(0.042, 20, 14), lensMat);
+      lens.renderOrder = 3;
+
+      const haloMat = guardMaterial(new MeshBasicMaterial({
+        color: 0xffdfae,
+        transparent: true,
+        opacity: 0.3,
+        blending: AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+        toneMapped: false
+      }));
+      const halo = new Mesh(new SphereGeometry(0.075, 20, 14), haloMat);
+      halo.renderOrder = 3;
+
+      aim.add(beamOuter, beamInner, body, shroud, bezel, stripe, tail, lens, halo);
+      rig.traverse((node: any) => {
+        (node as any).__isInspectorObject = true;
+      });
+
+      this.flashlightRig = rig;
+      if (this.scene) {
+        this.scene.add(rig);
+        this.syncFlashlightRig();
+      }
+    } catch (e) {
+      console.warn('[Three.js Inspector] Failed to build flashlight:', e);
+    }
+  }
+
+  private syncFlashlightRig() {
+    if (!this.flashlightRig || !this.debugCamera) return;
+    try {
+      this.flashlightRig.position.copy(this.debugCamera.position);
+      this.flashlightRig.quaternion.copy(this.debugCamera.quaternion);
+      // Scale the whole torch with the working distance so it reads correctly
+      // in both tiny and huge scenes
+      const dist = this.controls
+        ? this.debugCamera.position.distanceTo(this.controls.target)
+        : 10;
+      this.flashlightRig.scale.setScalar(MathUtils.clamp(dist / 12, 0.25, 4));
+    } catch (e) {}
+  }
+
+  private teardownFlashlight() {
+    if (this.flashlightRig) {
+      if (this.scene) {
+        try { this.scene.remove(this.flashlightRig); } catch (e) {}
+      }
+      this.flashlightRig.traverse((node: any) => {
+        try {
+          node.geometry?.dispose?.();
+          const m = node.material;
+          if (Array.isArray(m)) m.forEach((mm: any) => mm?.dispose?.());
+          else m?.dispose?.();
+        } catch (e) {}
+      });
+      this.flashlightRig = null;
+    }
+    try { this.flashlight?.dispose?.(); } catch (e) {}
+    this.flashlight = null;
+    this.flashlightTarget = null;
+  }
+
   public disable() {
     if (!this.isActive) return;
 
-    if (this.headlight && this.debugCamera) {
-      this.debugCamera.remove(this.headlight);
-      this.headlight.dispose?.();
-      this.headlight = null;
-    }
-
-    if (this.ambientLight && this.debugCamera) {
-      this.debugCamera.remove(this.ambientLight);
-      this.ambientLight.dispose?.();
-      this.ambientLight = null;
-    }
+    this.teardownFlashlight();
+    this.scene = null;
 
     if (this.canvas && this.onContextMenuBound) {
       this.canvas.removeEventListener('contextmenu', this.onContextMenuBound);
@@ -270,18 +430,20 @@ export class DebugCameraManager {
   }
 
   public update() {
-    if (this.isActive && this.controls) {
+    if (!this.isActive) return;
+    if (this.controls) {
       try {
         this.controls.update();
       } catch (e) {}
     }
+    this.syncFlashlightRig();
   }
 
   public getCamera(fallback?: any): any {
     return this.isActive && this.debugCamera ? this.debugCamera : fallback;
   }
 
-  public focusOn(targetObject: any, domElement: HTMLCanvasElement, currentCamera?: any): boolean {
+  public focusOn(targetObject: any, domElement: HTMLCanvasElement, currentCamera?: any, scene?: any): boolean {
     if (!targetObject) return false;
 
     // If already focused, toggle revert back to original
@@ -292,7 +454,14 @@ export class DebugCameraManager {
 
     const wasActiveBefore = this.isActive;
     if (!this.isActive) {
-      this.enable(domElement, currentCamera);
+      this.enable(domElement, currentCamera, scene);
+    } else if (scene && this.flashlightRig && !this.flashlightRig.parent) {
+      // Already active but the rig never got a scene (first enable had none)
+      this.scene = scene;
+      try {
+        scene.add(this.flashlightRig);
+        this.syncFlashlightRig();
+      } catch (e) {}
     }
 
     if (!this.controls || !this.debugCamera) return false;

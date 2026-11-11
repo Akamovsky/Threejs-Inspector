@@ -53,6 +53,8 @@ export function executeInPage(code: string, callback?: (result: any, isException
 
 export function initBridge() {
   if (port) return;
+  // Stop reconnect loops when the extension context is gone (reload/update)
+  if (!chrome.runtime?.id) return;
 
   try {
     port = chrome.runtime.connect({

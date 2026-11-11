@@ -45,6 +45,9 @@ chrome.runtime.onConnect.addListener((port) => {
     port.onDisconnect.addListener(() => {
       if (tab.contentPort === port) {
         tab.contentPort = undefined;
+        // Content script port died (navigation or tab closed): the previous
+        // page's detection result is stale and must not leak into the popup.
+        tab.lastDetection = undefined;
       }
     });
   } else if (portName.startsWith('three-inspector-devtools-')) {

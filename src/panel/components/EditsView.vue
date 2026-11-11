@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { state, exportEditsJSON } from '../bridge';
-import { FileJson, Download, Trash2, History } from 'lucide-vue-next';
+import { FileJson, Download, Trash2, History } from '@lucide/vue';
 
 const edits = computed(() => state.sessionEdits);
 

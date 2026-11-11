@@ -25,6 +25,10 @@ import { MESSAGE_SOURCE, type InspectorMessage } from '../types/messages';
 
   function connectPort() {
     if (isConnecting || port) return;
+    // After an extension reload/update this content script is orphaned:
+    // chrome.runtime.id disappears and every connect() would throw forever,
+    // spamming the page console with reconnect attempts.
+    if (!chrome.runtime?.id) return;
     isConnecting = true;
 
     try {
