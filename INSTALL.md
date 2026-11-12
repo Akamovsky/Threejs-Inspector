@@ -18,7 +18,7 @@ and `chrome.devtools` APIs.
 ## Step 1 — Build the extension
 
 ```bash
-git clone <this-repo-url>
+git clone https://github.com/Akamovsky/Threejs-Inspector.git
 cd threejs-inspector
 npm install
 npm run build
